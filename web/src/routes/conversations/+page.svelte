@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { conversations as convsApi, messages as messagesApi } from '$lib/api/client';
 
@@ -7,24 +6,30 @@
 	let searchResults = $state<any[] | null>(null);
 	let loadingData = $state(true);
 
-	onMount(async () => {
-		const q = $page.url.searchParams.get('q');
-		if (q) {
-			try {
-				const res = await messagesApi.search(q);
-				searchResults = res.messages;
-			} catch {
-				searchResults = [];
-			}
-		}
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			(async () => {
+				const q = $page.url.searchParams.get('q');
+				if (q) {
+					try {
+						const res = await messagesApi.search(q);
+						searchResults = res.messages;
+					} catch {
+						searchResults = [];
+					}
+				}
 
-		try {
-			const res = await convsApi.list();
-			convList = res.conversations;
-		} catch {
-			// handled
-		} finally {
-			loadingData = false;
+				try {
+					const res = await convsApi.list();
+					convList = res.conversations;
+				} catch {
+					// handled
+				} finally {
+					loadingData = false;
+				}
+			})();
 		}
 	});
 </script>

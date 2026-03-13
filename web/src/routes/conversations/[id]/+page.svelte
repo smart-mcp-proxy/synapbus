@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { conversations as convsApi, messages as messagesApi } from '$lib/api/client';
 
@@ -10,7 +9,7 @@
 	let sending = $state(false);
 	let error = $state('');
 
-	$: convId = Number($page.params.id);
+	let convId = $derived(Number($page.params.id));
 
 	async function loadConversation() {
 		loadingData = true;
@@ -25,7 +24,13 @@
 		}
 	}
 
-	onMount(loadConversation);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadConversation();
+		}
+	});
 
 	async function sendReply(e: SubmitEvent) {
 		e.preventDefault();

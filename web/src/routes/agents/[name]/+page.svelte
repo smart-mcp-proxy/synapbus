@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { agents as agentsApi } from '$lib/api/client';
@@ -13,7 +12,7 @@
 	let deleting = $state(false);
 	let confirmDelete = $state(false);
 
-	$: agentName = $page.params.name;
+	let agentName = $derived($page.params.name);
 
 	async function loadAgent() {
 		loadingData = true;
@@ -28,7 +27,13 @@
 		}
 	}
 
-	onMount(loadAgent);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadAgent();
+		}
+	});
 
 	async function handleRevokeKey() {
 		revoking = true;

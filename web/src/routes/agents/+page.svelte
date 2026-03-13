@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { agents as agentsApi } from '$lib/api/client';
 	import AgentCard from '$lib/components/AgentCard.svelte';
 
@@ -27,7 +26,13 @@
 		}
 	}
 
-	onMount(loadAgents);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadAgents();
+		}
+	});
 
 	async function handleRegister(e: SubmitEvent) {
 		e.preventDefault();

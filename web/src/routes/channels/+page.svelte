@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { channels as channelsApi } from '$lib/api/client';
 
 	let channelList = $state<any[]>([]);
@@ -25,7 +24,13 @@
 		}
 	}
 
-	onMount(loadChannels);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadChannels();
+		}
+	});
 
 	async function handleCreate(e: SubmitEvent) {
 		e.preventDefault();

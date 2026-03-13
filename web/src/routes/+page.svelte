@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { messages as messagesApi, conversations as convsApi, agents as agentsApi } from '$lib/api/client';
 	import MessageList from '$lib/components/MessageList.svelte';
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
@@ -28,7 +27,13 @@
 		}
 	}
 
-	onMount(loadData);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadData();
+		}
+	});
 </script>
 
 <div class="max-w-4xl mx-auto">

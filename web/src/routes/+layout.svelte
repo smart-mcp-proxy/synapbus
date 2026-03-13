@@ -1,6 +1,5 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { checkAuth, user, loading } from '$lib/stores/auth';
@@ -10,25 +9,23 @@
 
 	let { children } = $props();
 	let sidebarOpen = $state(false);
-	let sseClient: SSEClient | null = null;
+	let sseClient: SSEClient | null = $state(null);
+	let initialized = $state(false);
 
-	onMount(async () => {
-		const isLoginPage = $page.url.pathname === '/login';
+	let isLoginPage = $derived($page.url.pathname === '/login');
 
-		const authenticated = await checkAuth();
-		if (!authenticated && !isLoginPage) {
-			goto(`/login?return=${encodeURIComponent($page.url.pathname)}`);
-			return;
+	$effect(() => {
+		if (!initialized) {
+			initialized = true;
+			checkAuth().then((authenticated) => {
+				if (!authenticated && !isLoginPage) {
+					goto(`/login?return=${encodeURIComponent($page.url.pathname)}`);
+				} else if (authenticated) {
+					sseClient = new SSEClient();
+					sseClient.connect();
+				}
+			});
 		}
-
-		if (authenticated) {
-			sseClient = new SSEClient();
-			sseClient.connect();
-		}
-
-		return () => {
-			sseClient?.disconnect();
-		};
 	});
 
 	$effect(() => {
@@ -37,7 +34,11 @@
 		}
 	});
 
-	$: isLoginPage = $page.url.pathname === '/login';
+	$effect(() => {
+		return () => {
+			sseClient?.disconnect();
+		};
+	});
 </script>
 
 {#if $loading}

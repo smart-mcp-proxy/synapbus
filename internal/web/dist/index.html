@@ -1,20 +1,46 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SynapBus</title>
-<style>
-  body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #334155; }
-  .placeholder { text-align: center; }
-  .placeholder h1 { font-size: 2rem; margin-bottom: 0.5rem; }
-  .placeholder p { color: #64748b; }
-</style>
-</head>
-<body>
-<div class="placeholder">
-  <h1>SynapBus</h1>
-  <p>Web UI placeholder. Run <code>make web</code> to build the Svelte SPA.</p>
-</div>
-</body>
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>SynapBus</title>
+		<script>
+			// Prevent flash of wrong theme
+			const theme = localStorage.getItem('synapbus-theme');
+			if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+				document.documentElement.classList.add('dark');
+			}
+		</script>
+		<link href="/_app/immutable/entry/start.CtCTsMzJ.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/i_hwctCb.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/-TS2BfOP.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/CjVAzn99.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/B3rAT5Sd.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/PZmxHExn.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/CQyUWFZw.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DKQxuds6.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.Da9TM-Vg.js" rel="modulepreload">
+		
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">
+			<script>
+				{
+					__sveltekit_1hzqm4w = {
+						base: ""
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/_app/immutable/entry/start.CtCTsMzJ.js"),
+						import("/_app/immutable/entry/app.Da9TM-Vg.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+	</body>
 </html>

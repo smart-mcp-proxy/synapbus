@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { channels as channelsApi } from '$lib/api/client';
 
@@ -9,7 +8,7 @@
 	let joinError = $state('');
 	let joining = $state(false);
 
-	$: channelName = $page.params.name;
+	let channelName = $derived($page.params.name);
 
 	async function loadChannel() {
 		loadingData = true;
@@ -24,7 +23,13 @@
 		}
 	}
 
-	onMount(loadChannel);
+	let _initialized = $state(false);
+	$effect(() => {
+		if (!_initialized) {
+			_initialized = true;
+			loadChannel();
+		}
+	});
 
 	async function handleJoin() {
 		joining = true;
