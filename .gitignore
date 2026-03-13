@@ -1,0 +1,38 @@
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Data directory
+data/
+
+# Node / Svelte
+web/node_modules/
+web/build/
+web/.svelte-kit/
+internal/web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Debug
+__debug_bin*
