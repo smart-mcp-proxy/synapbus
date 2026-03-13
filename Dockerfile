@@ -2,12 +2,13 @@
 FROM node:20-alpine AS web-builder
 WORKDIR /app/web
 COPY web/package*.json ./
-RUN npm ci
+RUN npm install --legacy-peer-deps
 COPY web/ ./
 RUN npm run build
 
 # Stage 2: Build Go binary
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
+RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
