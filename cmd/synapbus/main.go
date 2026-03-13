@@ -337,8 +337,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		r.Put("/auth/password", authHandlers.HandleChangePassword)
 	})
 
-	// MCP SSE endpoint
-	r.Mount("/mcp", mcpSrv.SSEHandler())
+	// MCP Streamable HTTP endpoint (with optional agent auth)
+	r.Group(func(r chi.Router) {
+		r.Use(agents.OptionalAuthMiddleware(agentService))
+		r.Mount("/mcp", mcpSrv.Handler())
+	})
 
 	// Create SSE hub for real-time events
 	sseHub := api.NewSSEHub()

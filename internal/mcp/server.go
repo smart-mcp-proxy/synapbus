@@ -17,7 +17,7 @@ import (
 // MCPServer wraps the mcp-go server with SynapBus services.
 type MCPServer struct {
 	mcpServer    *server.MCPServer
-	sseServer    *server.SSEServer
+	httpServer   *server.StreamableHTTPServer
 	connMgr      *ConnectionManager
 	agentService *agents.AgentService
 	logger       *slog.Logger
@@ -66,9 +66,9 @@ func NewMCPServer(
 		attachmentRegistrar.RegisterAll(mcpSrv)
 	}
 
-	// Create SSE transport with context func for auth propagation
-	sseServer := server.NewSSEServer(mcpSrv,
-		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+	// Create Streamable HTTP transport with context func for auth propagation
+	httpServer := server.NewStreamableHTTPServer(mcpSrv,
+		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			// Propagate agent identity from HTTP auth to MCP context
 			if agent, ok := agents.AgentFromContext(r.Context()); ok {
 				return ContextWithAgentName(ctx, agent.Name)
@@ -79,19 +79,19 @@ func NewMCPServer(
 
 	s := &MCPServer{
 		mcpServer:    mcpSrv,
-		sseServer:    sseServer,
+		httpServer:   httpServer,
 		connMgr:      NewConnectionManager(),
 		agentService: agentService,
 		logger:       logger,
 	}
 
-	logger.Info("MCP server initialized")
+	logger.Info("MCP server initialized (streamable HTTP transport)")
 	return s
 }
 
-// SSEHandler returns the SSE handler for mounting on a router.
-func (s *MCPServer) SSEHandler() http.Handler {
-	return s.sseServer
+// Handler returns the HTTP handler for mounting on a router.
+func (s *MCPServer) Handler() http.Handler {
+	return s.httpServer
 }
 
 // ConnectionManager returns the connection manager.
@@ -102,7 +102,7 @@ func (s *MCPServer) ConnectionManager() *ConnectionManager {
 // Shutdown gracefully shuts down the MCP server.
 func (s *MCPServer) Shutdown(ctx context.Context) error {
 	s.logger.Info("MCP server shutting down")
-	if err := s.sseServer.Shutdown(ctx); err != nil {
+	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return err
 	}
 	return nil

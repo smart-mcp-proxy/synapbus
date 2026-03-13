@@ -22,6 +22,47 @@ func ContextWithAgent(ctx context.Context, agent *Agent) context.Context {
 	return context.WithValue(ctx, agentContextKey, agent)
 }
 
+// OptionalAuthMiddleware creates HTTP middleware that authenticates requests
+// via API key if an Authorization header is present, but allows
+// unauthenticated requests to pass through. This is used for endpoints
+// like MCP where some tools (register_agent) work without auth.
+func OptionalAuthMiddleware(service *AgentService) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			apiKey := parts[1]
+			agent, err := service.Authenticate(r.Context(), apiKey)
+			if err != nil {
+				slog.Warn("MCP authentication failed",
+					"remote_addr", r.RemoteAddr,
+					"error", err,
+				)
+				http.Error(w, `{"error":"unauthorized","message":"Invalid API key"}`, http.StatusUnauthorized)
+				return
+			}
+
+			slog.Debug("agent authenticated (MCP)",
+				"agent", agent.Name,
+				"remote_addr", r.RemoteAddr,
+			)
+
+			ctx := ContextWithAgent(r.Context(), agent)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // AuthMiddleware creates HTTP middleware that authenticates requests via API key.
 func AuthMiddleware(service *AgentService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
