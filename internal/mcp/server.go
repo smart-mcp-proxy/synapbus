@@ -11,6 +11,7 @@ import (
 	"github.com/smart-mcp-proxy/synapbus/internal/attachments"
 	"github.com/smart-mcp-proxy/synapbus/internal/channels"
 	"github.com/smart-mcp-proxy/synapbus/internal/messaging"
+	"github.com/smart-mcp-proxy/synapbus/internal/search"
 )
 
 // MCPServer wraps the mcp-go server with SynapBus services.
@@ -29,6 +30,7 @@ func NewMCPServer(
 	channelService *channels.Service,
 	swarmService *channels.SwarmService,
 	attachmentService *attachments.Service,
+	searchService *search.Service,
 ) *MCPServer {
 	logger := slog.Default().With("component", "mcp-server")
 
@@ -41,6 +43,9 @@ func NewMCPServer(
 
 	// Register all tools
 	registrar := NewToolRegistrar(msgService, agentService)
+	if searchService != nil {
+		registrar.SetSearchService(searchService)
+	}
 	registrar.RegisterAll(mcpSrv)
 
 	// Register channel tools
