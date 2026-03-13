@@ -56,7 +56,7 @@ func (tr *ToolRegistrar) RegisterAll(s *server.MCPServer) {
 func (tr *ToolRegistrar) sendMessageTool() mcp.Tool {
 	return mcp.NewTool("send_message",
 		mcp.WithDescription("Send a direct message to another agent or to a channel"),
-		mcp.WithString("to", mcp.Description("Name of the recipient agent"), mcp.Required()),
+		mcp.WithString("to", mcp.Description("Name of the recipient agent (required for DMs, omit for channel messages)")),
 		mcp.WithString("body", mcp.Description("Message body text"), mcp.Required()),
 		mcp.WithString("subject", mcp.Description("Conversation subject (optional)")),
 		mcp.WithNumber("priority", mcp.Description("Message priority (1-10, default 5)"), mcp.Min(1), mcp.Max(10)),
@@ -151,9 +151,6 @@ func (tr *ToolRegistrar) handleSendMessage(ctx context.Context, req mcp.CallTool
 	priority := req.GetInt("priority", 5)
 	metadataStr := req.GetString("metadata", "")
 
-	if to == "" {
-		return mcp.NewToolResultError("'to' parameter is required"), nil
-	}
 	if body == "" {
 		return mcp.NewToolResultError("'body' parameter is required"), nil
 	}
