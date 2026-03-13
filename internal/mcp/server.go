@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/smart-mcp-proxy/synapbus/internal/agents"
+	"github.com/smart-mcp-proxy/synapbus/internal/attachments"
 	"github.com/smart-mcp-proxy/synapbus/internal/channels"
 	"github.com/smart-mcp-proxy/synapbus/internal/messaging"
 )
@@ -26,7 +27,8 @@ func NewMCPServer(
 	msgService *messaging.MessagingService,
 	agentService *agents.AgentService,
 	channelService *channels.Service,
-	swarmService ...*channels.SwarmService,
+	swarmService *channels.SwarmService,
+	attachmentService *attachments.Service,
 ) *MCPServer {
 	logger := slog.Default().With("component", "mcp-server")
 
@@ -48,9 +50,15 @@ func NewMCPServer(
 	}
 
 	// Register swarm tools
-	if len(swarmService) > 0 && swarmService[0] != nil && channelService != nil {
-		swarmRegistrar := NewSwarmToolRegistrar(swarmService[0], channelService)
+	if swarmService != nil && channelService != nil {
+		swarmRegistrar := NewSwarmToolRegistrar(swarmService, channelService)
 		swarmRegistrar.RegisterAll(mcpSrv)
+	}
+
+	// Register attachment tools
+	if attachmentService != nil {
+		attachmentRegistrar := NewAttachmentToolRegistrar(attachmentService)
+		attachmentRegistrar.RegisterAll(mcpSrv)
 	}
 
 	// Create SSE transport with context func for auth propagation

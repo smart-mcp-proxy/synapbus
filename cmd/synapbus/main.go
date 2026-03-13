@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/smart-mcp-proxy/synapbus/internal/agents"
 	"github.com/smart-mcp-proxy/synapbus/internal/api"
+	"github.com/smart-mcp-proxy/synapbus/internal/attachments"
 	"github.com/smart-mcp-proxy/synapbus/internal/auth"
 	"github.com/smart-mcp-proxy/synapbus/internal/channels"
 	mcpserver "github.com/smart-mcp-proxy/synapbus/internal/mcp"
@@ -184,6 +186,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	taskStore := channels.NewSQLiteTaskStore(db.DB)
 	swarmService := channels.NewSwarmService(taskStore, channelStore, tracer)
 
+	// Create attachment service
+	attachmentsDir := filepath.Join(dataDir, "attachments")
+	cas, err := attachments.NewCAS(attachmentsDir, slog.Default())
+	if err != nil {
+		return fmt.Errorf("create CAS engine: %w", err)
+	}
+	attachmentStore := attachments.NewSQLiteStore(db.DB, slog.Default())
+	attachmentService := attachments.NewService(attachmentStore, cas, slog.Default())
+	slog.Info("attachment service initialized", "dir", attachmentsDir)
+
 	// Initialize auth subsystem
 	authSecret := make([]byte, 32)
 	if _, err := rand.Read(authSecret); err != nil {
@@ -224,8 +236,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Printf("========================================\n\n")
 	}
 
-	// Create MCP server (with swarm tools)
-	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService)
+	// Create MCP server (with swarm + attachment tools)
+	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService)
 	startTime := time.Now()
 
 	// Start task expiry worker
@@ -259,8 +271,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// MCP SSE endpoint
 	r.Mount("/mcp", mcpSrv.SSEHandler())
 
-	// Mount API routes (traces, export, stats, metrics)
-	apiRouter := api.NewRouter(traceStore, metrics)
+	// Mount API routes (traces, export, stats, metrics, attachments)
+	apiRouter := api.NewRouter(traceStore, metrics, attachmentService)
 	r.Mount("/", apiRouter)
 
 	// Start HTTP server
