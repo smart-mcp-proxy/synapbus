@@ -355,6 +355,26 @@ func (s *MessagingService) SearchMessages(ctx context.Context, agentName, query 
 	return messages, nil
 }
 
+// GetPendingDMCount returns the total count of pending DMs for an agent.
+func (s *MessagingService) GetPendingDMCount(ctx context.Context, agentName string) (int64, error) {
+	return s.store.CountPendingDMs(ctx, agentName)
+}
+
+// GetPendingDMs returns up to limit pending DMs for an agent, newest first.
+func (s *MessagingService) GetPendingDMs(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	return s.store.GetPendingDMs(ctx, agentName, limit)
+}
+
+// GetRecentMentions returns recent channel messages mentioning the agent.
+func (s *MessagingService) GetRecentMentions(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	return s.store.GetRecentMentions(ctx, agentName, limit)
+}
+
+// GetSystemNotifications returns pending messages from the "system" agent.
+func (s *MessagingService) GetSystemNotifications(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	return s.store.GetSystemNotifications(ctx, agentName, limit)
+}
+
 // GetMessageByID returns a single message by its ID.
 func (s *MessagingService) GetMessageByID(ctx context.Context, id int64) (*Message, error) {
 	msg, err := s.store.GetMessageByID(ctx, id)

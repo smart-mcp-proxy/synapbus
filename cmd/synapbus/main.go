@@ -57,6 +57,7 @@ var (
 	traceRetention    string
 	adminSocketPath   string
 	webhookWorkers    int
+	messageRetention  string
 )
 
 func main() {
@@ -81,6 +82,7 @@ func main() {
 	serveCmd.Flags().StringVar(&traceRetention, "trace-retention", "0", "Trace retention period (e.g. 30d, 90d, 0 for unlimited)")
 	serveCmd.Flags().StringVar(&adminSocketPath, "admin-socket", "", "Admin Unix socket path (default: {data}/synapbus.sock)")
 	serveCmd.Flags().IntVar(&webhookWorkers, "webhook-workers", 8, "Number of webhook delivery worker goroutines")
+	serveCmd.Flags().StringVar(&messageRetention, "message-retention", "12m", "Message retention period (e.g. 12m, 365d, 0 to disable)")
 
 	rootCmd.AddCommand(serveCmd)
 
@@ -152,6 +154,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if ww := os.Getenv("SYNAPBUS_WEBHOOK_WORKERS"); ww != "" {
 		fmt.Sscanf(ww, "%d", &webhookWorkers)
+	}
+	if mr := os.Getenv("SYNAPBUS_MESSAGE_RETENTION"); mr != "" {
+		messageRetention = mr
 	}
 	if adminSocketPath == "" {
 		adminSocketPath = filepath.Join(dataDir, "synapbus.sock")
@@ -228,6 +233,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Wire dead letter store into agent service for capture on deregistration
 	deadLetterStore := messaging.NewDeadLetterStore(db.DB)
 	agentService.SetDeadLetterStore(deadLetterStore)
+
+	// Ensure system agent exists (used for retention warnings and system notifications)
+	if _, err := agentService.EnsureSystemAgent(ctx, 1); err != nil {
+		slog.Warn("failed to create system agent", "error", err)
+	}
 
 	channelStore := channels.NewSQLiteChannelStore(db.DB)
 	channelService := channels.NewService(channelStore, msgService, tracer)
@@ -427,13 +437,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 	msgService.SetDispatcher(eventDispatcher)
 
 	// Create MCP server (with swarm + attachment + search + webhook + K8s tools)
-	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, con, webhookService, k8sService)
+	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, con, webhookService, k8sService, db.DB)
 	startTime := time.Now()
 
 	// Start task expiry worker
 	expiryWorker := channels.NewExpiryWorker(swarmService, 1*time.Minute)
 	expiryWorker.Start()
 	slog.Info("task expiry worker started")
+
+	// Start message retention worker
+	retentionCfg := messaging.ParseRetentionPeriod(messageRetention)
+	var retentionWorker *messaging.RetentionWorker
+	if retentionCfg.Enabled {
+		retentionWorker = messaging.NewRetentionWorker(db.DB, retentionCfg, dataDir)
+		retentionWorker.Start()
+		slog.Info("message retention worker started",
+			"retention_period", retentionCfg.RetentionPeriodHuman(),
+			"cleanup_interval", retentionCfg.CleanupInterval.String(),
+		)
+	} else {
+		slog.Info("message retention disabled")
+	}
 
 	// Create health checker
 	healthChecker := health.NewChecker(db.DB, version)
@@ -520,13 +544,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start admin socket server
 	adminSvcs := &admin.Services{
-		Users:    userStore,
-		Sessions: sessionStore,
-		Agents:   agentService,
-		Messages: msgService,
-		Channels: channelService,
-		Traces:   traceStore,
-		DataDir:  dataDir,
+		Users:             userStore,
+		Sessions:          sessionStore,
+		Agents:            agentService,
+		Messages:          msgService,
+		Channels:          channelService,
+		Traces:            traceStore,
+		DataDir:           dataDir,
+	}
+	// Wire optional services into admin (may be nil if not configured)
+	if searchCfg.IsEnabled() {
+		adminSvcs.EmbeddingStore = search.NewEmbeddingStore(db.DB)
+		adminSvcs.VectorIndex = vectorIndex
+		adminSvcs.SearchService = searchService
+	}
+	if attachmentService != nil {
+		adminSvcs.AttachmentService = attachmentService
+	}
+	if retentionWorker != nil {
+		adminSvcs.RetentionWorker = retentionWorker
 	}
 	adminServer := admin.NewServer(adminSocketPath, db.DB, adminSvcs, logger)
 	if err := adminServer.Start(); err != nil {
@@ -580,6 +616,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Stop expiry worker
 	expiryWorker.Stop()
+
+	// Stop message retention worker
+	if retentionWorker != nil {
+		retentionWorker.Stop()
+	}
 
 	// Stop embedding pipeline
 	if embPipeline != nil {

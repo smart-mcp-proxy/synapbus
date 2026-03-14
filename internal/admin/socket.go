@@ -168,6 +168,26 @@ func (s *AdminServer) dispatch(req Request) Response {
 	case "conversations.show":
 		return s.handleConversationsShow(ctx, req.Args)
 
+	// --- embeddings ---
+	case "embeddings.status":
+		return s.handleEmbeddingsStatus(ctx)
+	case "embeddings.reindex":
+		return s.handleEmbeddingsReindex(ctx)
+	case "embeddings.clear":
+		return s.handleEmbeddingsClear(ctx)
+
+	// --- db maintenance ---
+	case "db.vacuum":
+		return s.handleDBVacuum(ctx)
+
+	// --- messages purge ---
+	case "messages.purge":
+		return s.handleMessagesPurge(ctx, req.Args)
+
+	// --- retention ---
+	case "retention.status":
+		return s.handleRetentionStatus(ctx)
+
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %s", req.Command)}
 	}
@@ -938,6 +958,184 @@ func (s *AdminServer) handleConversationsShow(ctx context.Context, args json.Raw
 	return Response{OK: true, Data: map[string]interface{}{
 		"conversation": conv,
 		"messages":     msgs,
+	}}
+}
+
+// ---------- embeddings handlers ----------
+
+func (s *AdminServer) handleEmbeddingsStatus(ctx context.Context) Response {
+	result := map[string]interface{}{
+		"provider":       "",
+		"total_embedded": int64(0),
+		"pending_count":  int64(0),
+		"failed_count":   int64(0),
+		"index_size":     0,
+		"dimensions":     0,
+	}
+
+	if s.services.EmbeddingStore == nil {
+		return Response{OK: true, Data: result}
+	}
+
+	stats, err := s.services.EmbeddingStore.Stats(ctx)
+	if err != nil {
+		return Response{OK: false, Error: "get stats: " + err.Error()}
+	}
+
+	result["provider"] = stats.Provider
+	result["total_embedded"] = stats.TotalEmbedded
+	result["pending_count"] = stats.PendingCount
+	result["failed_count"] = stats.FailedCount
+	result["dimensions"] = stats.Dimensions
+
+	if s.services.VectorIndex != nil {
+		result["index_size"] = s.services.VectorIndex.Len()
+	}
+
+	return Response{OK: true, Data: result}
+}
+
+func (s *AdminServer) handleEmbeddingsReindex(ctx context.Context) Response {
+	if s.services.EmbeddingStore == nil {
+		return Response{OK: false, Error: "embedding subsystem not configured"}
+	}
+
+	if err := s.services.EmbeddingStore.DeleteAllEmbeddings(ctx); err != nil {
+		return Response{OK: false, Error: "delete embeddings: " + err.Error()}
+	}
+
+	if err := s.services.EmbeddingStore.ClearQueue(ctx); err != nil {
+		return Response{OK: false, Error: "clear queue: " + err.Error()}
+	}
+
+	clearedIndex := false
+	if s.services.VectorIndex != nil {
+		if err := s.services.VectorIndex.Rebuild(nil); err != nil {
+			return Response{OK: false, Error: "clear index: " + err.Error()}
+		}
+		clearedIndex = true
+	}
+
+	enqueued, err := s.services.EmbeddingStore.EnqueueAllMessages(ctx)
+	if err != nil {
+		return Response{OK: false, Error: "enqueue messages: " + err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"deleted_embeddings": true,
+		"cleared_index":      clearedIndex,
+		"enqueued_messages":  enqueued,
+	}}
+}
+
+func (s *AdminServer) handleEmbeddingsClear(ctx context.Context) Response {
+	if s.services.EmbeddingStore == nil {
+		return Response{OK: false, Error: "embedding subsystem not configured"}
+	}
+
+	if err := s.services.EmbeddingStore.DeleteAllEmbeddings(ctx); err != nil {
+		return Response{OK: false, Error: "delete embeddings: " + err.Error()}
+	}
+
+	if err := s.services.EmbeddingStore.ClearQueue(ctx); err != nil {
+		return Response{OK: false, Error: "clear queue: " + err.Error()}
+	}
+
+	clearedIndex := false
+	if s.services.VectorIndex != nil {
+		if err := s.services.VectorIndex.Rebuild(nil); err != nil {
+			return Response{OK: false, Error: "clear index: " + err.Error()}
+		}
+		clearedIndex = true
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"deleted_embeddings": true,
+		"cleared_index":      clearedIndex,
+		"cleared_queue":      true,
+	}}
+}
+
+// ---------- db maintenance handlers ----------
+
+func (s *AdminServer) handleDBVacuum(ctx context.Context) Response {
+	dbPath := filepath.Join(s.services.DataDir, "synapbus.db")
+
+	beforeInfo, err := os.Stat(dbPath)
+	if err != nil {
+		return Response{OK: false, Error: "stat db: " + err.Error()}
+	}
+	beforeSize := beforeInfo.Size()
+
+	start := time.Now()
+
+	if _, err := s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return Response{OK: false, Error: "wal checkpoint: " + err.Error()}
+	}
+
+	if _, err := s.db.ExecContext(ctx, "VACUUM"); err != nil {
+		return Response{OK: false, Error: "vacuum: " + err.Error()}
+	}
+
+	durationMs := time.Since(start).Milliseconds()
+
+	afterInfo, err := os.Stat(dbPath)
+	if err != nil {
+		return Response{OK: false, Error: "stat db after vacuum: " + err.Error()}
+	}
+	afterSize := afterInfo.Size()
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"before_size_bytes": beforeSize,
+		"after_size_bytes":  afterSize,
+		"reclaimed_bytes":   beforeSize - afterSize,
+		"duration_ms":       durationMs,
+	}}
+}
+
+// ---------- messages purge handler ----------
+
+func (s *AdminServer) handleMessagesPurge(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		OlderThan string `json:"older_than"`
+		Agent     string `json:"agent"`
+		Channel   string `json:"channel"`
+	}
+	if args != nil {
+		json.Unmarshal(args, &p)
+	}
+
+	if p.OlderThan == "" && p.Agent == "" && p.Channel == "" {
+		return Response{OK: false, Error: "at least one filter is required (older_than, agent, or channel)"}
+	}
+
+	var olderThan time.Duration
+	if p.OlderThan != "" {
+		cfg := messaging.ParseRetentionPeriod(p.OlderThan)
+		if cfg.RetentionPeriod <= 0 {
+			return Response{OK: false, Error: fmt.Sprintf("invalid duration: %q", p.OlderThan)}
+		}
+		olderThan = cfg.RetentionPeriod
+	}
+
+	counts, err := messaging.PurgeMessages(ctx, s.db, s.services.DataDir, olderThan, p.Agent, p.Channel)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: counts}
+}
+
+// ---------- retention handler ----------
+
+func (s *AdminServer) handleRetentionStatus(ctx context.Context) Response {
+	if s.services.RetentionWorker != nil {
+		return Response{OK: true, Data: s.services.RetentionWorker.Status()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"enabled": false,
+		"message": "retention worker not configured",
 	}}
 }
 

@@ -480,7 +480,41 @@ func addAdminCommands(rootCmd *cobra.Command) {
 	messagesSearchCmd.Flags().IntVar(&messagesSearchLimit, "limit", 20, "Max results")
 	messagesSearchCmd.MarkFlagRequired("query")
 
-	messagesCmd.AddCommand(messagesListCmd, messagesSearchCmd)
+	var (
+		messagesPurgeOlderThan string
+		messagesPurgeAgent     string
+		messagesPurgeChannel   string
+	)
+	messagesPurgeCmd := &cobra.Command{
+		Use:   "purge",
+		Short: "Delete messages matching filters (at least one filter required)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reqArgs := map[string]interface{}{}
+			if messagesPurgeOlderThan != "" {
+				reqArgs["older_than"] = messagesPurgeOlderThan
+			}
+			if messagesPurgeAgent != "" {
+				reqArgs["agent"] = messagesPurgeAgent
+			}
+			if messagesPurgeChannel != "" {
+				reqArgs["channel"] = messagesPurgeChannel
+			}
+			if len(reqArgs) == 0 {
+				return fmt.Errorf("at least one filter is required (--older-than, --agent, or --channel)")
+			}
+			resp, err := adminRequest("messages.purge", reqArgs)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	messagesPurgeCmd.Flags().StringVar(&messagesPurgeOlderThan, "older-than", "", "Delete messages older than this (e.g. 6m, 90d, 2160h)")
+	messagesPurgeCmd.Flags().StringVar(&messagesPurgeAgent, "agent", "", "Delete messages from/to this agent")
+	messagesPurgeCmd.Flags().StringVar(&messagesPurgeChannel, "channel", "", "Delete messages in this channel")
+
+	messagesCmd.AddCommand(messagesListCmd, messagesSearchCmd, messagesPurgeCmd)
 
 	// ----- channels commands -----
 	channelsCmd := &cobra.Command{
@@ -582,10 +616,99 @@ func addAdminCommands(rootCmd *cobra.Command) {
 
 	conversationsCmd.AddCommand(conversationsListCmd, conversationsShowCmd)
 
+	// ----- embeddings commands -----
+	embeddingsCmd := &cobra.Command{
+		Use:   "embeddings",
+		Short: "Manage embedding vectors",
+	}
+
+	embeddingsStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show embedding status (provider, counts, index size)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("embeddings.status", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	embeddingsReindexCmd := &cobra.Command{
+		Use:   "reindex",
+		Short: "Clear all embeddings and re-queue all messages for embedding",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("embeddings.reindex", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	embeddingsClearCmd := &cobra.Command{
+		Use:   "clear",
+		Short: "Delete all embeddings and clear the vector index",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("embeddings.clear", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	embeddingsCmd.AddCommand(embeddingsStatusCmd, embeddingsReindexCmd, embeddingsClearCmd)
+
+	// ----- db commands -----
+	dbCmd := &cobra.Command{
+		Use:   "db",
+		Short: "Database maintenance",
+	}
+
+	dbVacuumCmd := &cobra.Command{
+		Use:   "vacuum",
+		Short: "Compact the database to reclaim disk space",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("db.vacuum", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	dbCmd.AddCommand(dbVacuumCmd)
+
+	// ----- retention commands -----
+	retentionCmd := &cobra.Command{
+		Use:   "retention",
+		Short: "Message retention management",
+	}
+
+	retentionStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show retention configuration and status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("retention.status", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	retentionCmd.AddCommand(retentionStatusCmd)
+
 	// ----- add persistent flag and commands to root -----
 	rootCmd.PersistentFlags().StringVar(&adminSocket, "socket", "./data/synapbus.sock", "Path to admin Unix socket")
 
-	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd)
+	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd, embeddingsCmd, dbCmd, retentionCmd)
 }
 
 // toTableRows remaps []map[string]string using a header->key mapping.

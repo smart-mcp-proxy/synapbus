@@ -345,6 +345,37 @@ func (s *AgentService) EnsureHumanAgent(ctx context.Context, username, displayNa
 	return agent, nil
 }
 
+// EnsureSystemAgent creates the "system" agent if it doesn't already exist.
+// The system agent is used for retention warnings and other system notifications.
+func (s *AgentService) EnsureSystemAgent(ctx context.Context, ownerID int64) (*Agent, error) {
+	agent, err := s.store.GetAgentByName(ctx, "system")
+	if err == nil && agent != nil && agent.Status == "active" {
+		return agent, nil
+	}
+
+	agent, _, err = s.Register(ctx, "system", "System", "ai", json.RawMessage(`{"role":"system-notifications"}`), ownerID)
+	if err != nil {
+		// May already exist from a concurrent call
+		agent, err2 := s.store.GetAgentByName(ctx, "system")
+		if err2 == nil && agent != nil {
+			return agent, nil
+		}
+		return nil, fmt.Errorf("create system agent: %w", err)
+	}
+
+	s.logger.Info("created system agent", "owner_id", ownerID)
+	return agent, nil
+}
+
+// GetAgentWithOwner returns agent details along with the owner's display name.
+func (s *AgentService) GetAgentWithOwner(ctx context.Context, name string) (*Agent, string, error) {
+	agent, err := s.store.GetAgentByName(ctx, name)
+	if err != nil {
+		return nil, "", fmt.Errorf("get agent: %w", err)
+	}
+	return agent, "", nil // Owner name resolved by caller with access to user store
+}
+
 // generateAPIKey creates a cryptographically random API key (32 bytes, hex encoded).
 func generateAPIKey() (string, error) {
 	b := make([]byte, 32)

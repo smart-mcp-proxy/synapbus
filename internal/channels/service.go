@@ -5,10 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/trace"
 )
+
+// ChannelSummary holds a joined channel with its unread message count.
+type ChannelSummary struct {
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	UnreadCount   int        `json:"unread"`
+	LastMessageAt *time.Time `json:"last_message_at"`
+}
 
 // Service provides business logic for channel operations.
 type Service struct {
@@ -518,6 +527,11 @@ func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAge
 	}
 
 	return []*messaging.Message{channelMsg}, nil
+}
+
+// GetChannelSummaries returns channels the agent has joined with unread message counts.
+func (s *Service) GetChannelSummaries(ctx context.Context, agentName string) ([]ChannelSummary, error) {
+	return s.store.GetChannelSummaries(ctx, agentName)
 }
 
 // GetMembers returns all members of a channel.

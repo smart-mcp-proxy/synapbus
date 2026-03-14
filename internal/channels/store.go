@@ -26,6 +26,7 @@ type ChannelStore interface {
 	GetInvite(ctx context.Context, channelID int64, agentName string) (*ChannelInvite, error)
 	HasPendingInvite(ctx context.Context, channelID int64, agentName string) (bool, error)
 	AcceptInvite(ctx context.Context, channelID int64, agentName string) error
+	GetChannelSummaries(ctx context.Context, agentName string) ([]ChannelSummary, error)
 }
 
 // SQLiteChannelStore implements ChannelStore using SQLite.
@@ -348,6 +349,46 @@ func (s *SQLiteChannelStore) AcceptInvite(ctx context.Context, channelID int64, 
 	}
 	s.logger.Info("invite accepted", "channel_id", channelID, "agent", agentName)
 	return nil
+}
+
+// GetChannelSummaries returns channels the agent has joined with unread message counts.
+func (s *SQLiteChannelStore) GetChannelSummaries(ctx context.Context, agentName string) ([]ChannelSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT c.id, c.name,
+		        (SELECT COUNT(*) FROM messages m
+		         WHERE m.channel_id = c.id
+		           AND m.id > COALESCE(
+		               (SELECT MAX(ist.last_read_message_id) FROM inbox_state ist
+		                WHERE ist.agent_name = ? AND ist.conversation_id = m.conversation_id), 0)
+		           AND m.from_agent != ?
+		        ) AS unread_count,
+		        (SELECT MAX(m2.created_at) FROM messages m2 WHERE m2.channel_id = c.id) AS last_message_at
+		 FROM channels c
+		 JOIN channel_members cm ON cm.channel_id = c.id AND cm.agent_name = ?
+		 ORDER BY c.name`,
+		agentName, agentName, agentName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get channel summaries: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []ChannelSummary
+	for rows.Next() {
+		var cs ChannelSummary
+		var lastMsg sql.NullTime
+		if err := rows.Scan(&cs.ID, &cs.Name, &cs.UnreadCount, &lastMsg); err != nil {
+			return nil, fmt.Errorf("scan channel summary: %w", err)
+		}
+		if lastMsg.Valid {
+			cs.LastMessageAt = &lastMsg.Time
+		}
+		summaries = append(summaries, cs)
+	}
+	if summaries == nil {
+		summaries = []ChannelSummary{}
+	}
+	return summaries, rows.Err()
 }
 
 // isUniqueConstraintError checks if an error is a SQLite unique constraint violation.

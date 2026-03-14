@@ -242,3 +242,40 @@ func (s *EmbeddingStore) ClearQueue(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM embedding_queue`)
 	return err
 }
+
+// FailedCount returns the number of failed items in the queue.
+func (s *EmbeddingStore) FailedCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM embedding_queue WHERE status = 'failed'`,
+	).Scan(&count)
+	return count, err
+}
+
+// EmbeddingStats returns aggregate statistics about the embedding subsystem.
+type EmbeddingStatsResult struct {
+	Provider      string `json:"provider"`
+	TotalEmbedded int64  `json:"total_embedded"`
+	PendingCount  int64  `json:"pending_count"`
+	FailedCount   int64  `json:"failed_count"`
+	Dimensions    int    `json:"dimensions"`
+}
+
+// Stats returns aggregate embedding statistics.
+func (s *EmbeddingStore) Stats(ctx context.Context) (*EmbeddingStatsResult, error) {
+	stats := &EmbeddingStatsResult{}
+
+	// Get provider and dimensions from most recent embedding
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(provider, ''), COALESCE(dimensions, 0) FROM embeddings ORDER BY embedded_at DESC LIMIT 1`,
+	).Scan(&stats.Provider, &stats.Dimensions)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get provider: %w", err)
+	}
+
+	stats.TotalEmbedded, _ = s.EmbeddingCount(ctx)
+	stats.PendingCount, _ = s.PendingCount(ctx)
+	stats.FailedCount, _ = s.FailedCount(ctx)
+
+	return stats, nil
+}

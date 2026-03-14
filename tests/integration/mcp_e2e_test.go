@@ -117,7 +117,7 @@ func setupEnv(t *testing.T) *testEnv {
 	con := console.NewWithWriter(io.Discard)
 
 	// Create MCP server
-	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attService, searchService, con, nil, nil)
+	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attService, searchService, con, nil, nil, db)
 	t.Cleanup(func() {
 		mcpSrv.Shutdown(context.Background())
 	})

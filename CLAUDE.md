@@ -69,6 +69,7 @@ make lint           # Run linters
 | `OPENAI_API_KEY` | OpenAI API key for embeddings | (none) |
 | `GEMINI_API_KEY` | Google Gemini API key for embeddings | (none) |
 | `SYNAPBUS_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
+| `SYNAPBUS_MESSAGE_RETENTION` | Message retention period (e.g. `12m`, `365d`, `0` to disable) | `12m` |
 
 ## Conventions
 
@@ -95,6 +96,8 @@ make lint           # Run linters
 - modernc.org/sqlite (pure Go), TFMV/hnsw (vectors) (002-mcp-auth-ux-polish)
 - Go 1.25+ (from go.mod) + mark3labs/mcp-go (MCP tools), go-chi/chi (HTTP), golang.org/x/time/rate (rate limiting), k8s.io/client-go (K8s Jobs — optional) (003-webhooks-k8s-runner)
 - modernc.org/sqlite (pure Go), migration 009_webhooks.sql (003-webhooks-k8s-runner)
+- Go 1.25+ (per go.mod) + mark3labs/mcp-go (MCP tools), go-chi/chi (HTTP), spf13/cobra (CLI), modernc.org/sqlite (storage), TFMV/hnsw (vectors) (004-embeddings-retention-inbox)
+- SQLite (modernc.org/sqlite, pure Go) — single DB file in `--data` directory (004-embeddings-retention-inbox)
 
 ## Recent Changes
 - 002-mcp-auth-ux-polish: Added Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI)

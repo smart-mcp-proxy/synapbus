@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,7 @@ func NewMCPServer(
 	consolePrinter *console.Printer,
 	webhookService *webhooks.WebhookService,
 	k8sService *k8s.K8sService,
+	db *sql.DB,
 ) *MCPServer {
 	logger := slog.Default().With("component", "mcp-server")
 	connMgr := NewConnectionManager()
@@ -145,6 +147,12 @@ func NewMCPServer(
 	registrar := NewToolRegistrar(msgService, agentService)
 	if searchService != nil {
 		registrar.SetSearchService(searchService)
+	}
+	if channelService != nil {
+		registrar.SetChannelService(channelService)
+	}
+	if db != nil {
+		registrar.SetDB(db)
 	}
 	registrar.RegisterAll(mcpSrv)
 

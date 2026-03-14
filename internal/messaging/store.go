@@ -26,6 +26,10 @@ type MessageStore interface {
 	GetChannelMessages(ctx context.Context, channelID int64, limit int) ([]*Message, error)
 	GetDMMessages(ctx context.Context, agents []string, peerAgent string, limit int) ([]*Message, error)
 	AgentExists(ctx context.Context, agentName string) (bool, error)
+	CountPendingDMs(ctx context.Context, agentName string) (int64, error)
+	GetPendingDMs(ctx context.Context, agentName string, limit int) ([]*Message, error)
+	GetRecentMentions(ctx context.Context, agentName string, limit int) ([]*Message, error)
+	GetSystemNotifications(ctx context.Context, agentName string, limit int) ([]*Message, error)
 }
 
 // SQLiteMessageStore implements MessageStore using SQLite.
@@ -505,6 +509,84 @@ func (s *SQLiteMessageStore) GetDMMessages(ctx context.Context, agents []string,
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get dm messages: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteMessageStore) CountPendingDMs(ctx context.Context, agentName string) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND status = 'pending' AND channel_id IS NULL`,
+		agentName,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count pending DMs: %w", err)
+	}
+	return count, nil
+}
+
+func (s *SQLiteMessageStore) GetPendingDMs(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, conversation_id, from_agent, to_agent, channel_id,
+		        body, priority, status, metadata, claimed_by, claimed_at,
+		        created_at, updated_at, reply_to
+		 FROM messages
+		 WHERE to_agent = ? AND status IN ('pending','processing') AND channel_id IS NULL AND from_agent != 'system'
+		 ORDER BY created_at DESC
+		 LIMIT ?`,
+		agentName, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get pending DMs: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteMessageStore) GetRecentMentions(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.id, m.conversation_id, m.from_agent, m.to_agent, m.channel_id,
+		        m.body, m.priority, m.status, m.metadata, m.claimed_by, m.claimed_at,
+		        m.created_at, m.updated_at, m.reply_to
+		 FROM messages m
+		 JOIN channel_members cm ON cm.channel_id = m.channel_id AND cm.agent_name = ?
+		 WHERE m.channel_id IS NOT NULL
+		   AND m.body LIKE '%@' || ? || '%'
+		   AND m.from_agent != ?
+		 ORDER BY m.created_at DESC
+		 LIMIT ?`,
+		agentName, agentName, agentName, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get recent mentions: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteMessageStore) GetSystemNotifications(ctx context.Context, agentName string, limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, conversation_id, from_agent, to_agent, channel_id,
+		        body, priority, status, metadata, claimed_by, claimed_at,
+		        created_at, updated_at, reply_to
+		 FROM messages
+		 WHERE to_agent = ? AND from_agent = 'system' AND status = 'pending'
+		 ORDER BY created_at DESC
+		 LIMIT ?`,
+		agentName, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get system notifications: %w", err)
 	}
 	defer rows.Close()
 	return scanMessages(rows)

@@ -2,24 +2,29 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/synapbus/synapbus/internal/agents"
+	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/search"
 )
 
 // ToolRegistrar registers all SynapBus MCP tools on the given server.
 type ToolRegistrar struct {
-	msgService    *messaging.MessagingService
-	agentService  *agents.AgentService
-	searchService *search.Service
-	logger        *slog.Logger
+	msgService     *messaging.MessagingService
+	agentService   *agents.AgentService
+	channelService *channels.Service
+	searchService  *search.Service
+	db             *sql.DB
+	logger         *slog.Logger
 }
 
 // NewToolRegistrar creates a new tool registrar.
@@ -36,10 +41,21 @@ func (tr *ToolRegistrar) SetSearchService(svc *search.Service) {
 	tr.searchService = svc
 }
 
+// SetChannelService sets the channel service for my_status support.
+func (tr *ToolRegistrar) SetChannelService(svc *channels.Service) {
+	tr.channelService = svc
+}
+
+// SetDB sets the database handle for direct queries (e.g. owner name lookup).
+func (tr *ToolRegistrar) SetDB(db *sql.DB) {
+	tr.db = db
+}
+
 // RegisterAll registers all tools on the MCP server.
 // Note: Agent management tools (register, update, deregister) are NOT exposed via MCP.
 // Agents are managed exclusively through the Web UI. MCP is for messaging only.
 func (tr *ToolRegistrar) RegisterAll(s *server.MCPServer) {
+	s.AddTool(tr.myStatusTool(), tr.handleMyStatus)
 	s.AddTool(tr.sendMessageTool(), tr.handleSendMessage)
 	s.AddTool(tr.readInboxTool(), tr.handleReadInbox)
 	s.AddTool(tr.claimMessagesTool(), tr.handleClaimMessages)
@@ -47,7 +63,7 @@ func (tr *ToolRegistrar) RegisterAll(s *server.MCPServer) {
 	s.AddTool(tr.searchMessagesTool(), tr.handleSearchMessages)
 	s.AddTool(tr.discoverAgentsTool(), tr.handleDiscoverAgents)
 
-	tr.logger.Info("all MCP tools registered", "count", 6)
+	tr.logger.Info("all MCP tools registered", "count", 7)
 }
 
 // --- Tool Definitions ---
@@ -112,6 +128,11 @@ func (tr *ToolRegistrar) discoverAgentsTool() mcp.Tool {
 	)
 }
 
+func (tr *ToolRegistrar) myStatusTool() mcp.Tool {
+	return mcp.NewTool("my_status",
+		mcp.WithDescription("Get your complete status overview — identity, pending messages, channel mentions, system notifications, and statistics. Call this first when connecting to SynapBus."),
+	)
+}
 
 // --- Tool Handlers ---
 
@@ -342,22 +363,200 @@ func (tr *ToolRegistrar) handleDiscoverAgents(ctx context.Context, req mcp.CallT
 		return mcp.NewToolResultError(fmt.Sprintf("discover_agents failed: %s", err)), nil
 	}
 
-	// Strip sensitive fields
-	result := make([]map[string]any, len(agentsList))
-	for i, a := range agentsList {
-		result[i] = map[string]any{
+	// Strip sensitive fields, exclude system agent
+	result := make([]map[string]any, 0, len(agentsList))
+	for _, a := range agentsList {
+		if a.Name == "system" {
+			continue
+		}
+		result = append(result, map[string]any{
 			"name":         a.Name,
 			"display_name": a.DisplayName,
 			"type":         a.Type,
 			"capabilities": a.Capabilities,
 			"status":       a.Status,
-		}
+		})
 	}
 
 	return resultJSON(map[string]any{
 		"agents": result,
 		"count":  len(result),
 	})
+}
+
+func (tr *ToolRegistrar) handleMyStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	agentName, ok := extractAgentName(ctx)
+	if !ok {
+		return mcp.NewToolResultError("authentication required"), nil
+	}
+
+	// 1. Get agent identity
+	agent, err := tr.agentService.GetAgent(ctx, agentName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+	}
+
+	// Resolve owner name from users table
+	ownerName := ""
+	if tr.db != nil {
+		var username sql.NullString
+		_ = tr.db.QueryRowContext(ctx,
+			`SELECT username FROM users WHERE id = ?`, agent.OwnerID,
+		).Scan(&username)
+		if username.Valid {
+			ownerName = username.String
+		}
+	}
+
+	agentInfo := map[string]any{
+		"name":         agent.Name,
+		"display_name": agent.DisplayName,
+		"type":         agent.Type,
+		"owner":        ownerName,
+	}
+
+	// 2. Get pending DMs
+	pendingDMs, err := tr.msgService.GetPendingDMs(ctx, agentName, 10)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+	}
+	pendingDMCount, err := tr.msgService.GetPendingDMCount(ctx, agentName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+	}
+
+	dmList := make([]map[string]any, len(pendingDMs))
+	for i, msg := range pendingDMs {
+		body := msg.Body
+		if len(body) > 200 {
+			body = body[:200] + "..."
+		}
+		entry := map[string]any{
+			"id":         msg.ID,
+			"from":       msg.FromAgent,
+			"body":       body,
+			"priority":   msg.Priority,
+			"status":     msg.Status,
+			"created_at": msg.CreatedAt,
+		}
+		// Include subject from conversation if available
+		if msg.ConversationID > 0 {
+			conv, _, _ := tr.msgService.GetConversation(ctx, msg.ConversationID)
+			if conv != nil && conv.Subject != "" {
+				entry["subject"] = conv.Subject
+			}
+		}
+		dmList[i] = entry
+	}
+
+	// 3. Get channel mentions
+	mentions, err := tr.msgService.GetRecentMentions(ctx, agentName, 10)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+	}
+
+	mentionList := make([]map[string]any, len(mentions))
+	for i, msg := range mentions {
+		body := msg.Body
+		if len(body) > 200 {
+			body = body[:200] + "..."
+		}
+		entry := map[string]any{
+			"id":         msg.ID,
+			"from":       msg.FromAgent,
+			"body":       body,
+			"created_at": msg.CreatedAt,
+		}
+		// Try to extract channel name from metadata
+		if len(msg.Metadata) > 0 {
+			var meta map[string]any
+			if json.Unmarshal(msg.Metadata, &meta) == nil {
+				if chName, ok := meta["channel_name"].(string); ok {
+					entry["channel"] = chName
+				}
+			}
+		}
+		mentionList[i] = entry
+	}
+
+	// 4. Get system notifications
+	sysNotifs, err := tr.msgService.GetSystemNotifications(ctx, agentName, 5)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+	}
+
+	sysNotifList := make([]map[string]any, len(sysNotifs))
+	for i, msg := range sysNotifs {
+		body := msg.Body
+		if len(body) > 200 {
+			body = body[:200] + "..."
+		}
+		sysNotifList[i] = map[string]any{
+			"id":         msg.ID,
+			"body":       body,
+			"created_at": msg.CreatedAt,
+		}
+	}
+
+	// 5. Get channel summaries
+	var channelSummaries []channels.ChannelSummary
+	if tr.channelService != nil {
+		channelSummaries, err = tr.channelService.GetChannelSummaries(ctx, agentName)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("my_status failed: %s", err)), nil
+		}
+	}
+	if channelSummaries == nil {
+		channelSummaries = []channels.ChannelSummary{}
+	}
+
+	// 6. Build stats
+	totalUnreadChannel := 0
+	for _, cs := range channelSummaries {
+		totalUnreadChannel += cs.UnreadCount
+	}
+
+	stats := map[string]any{
+		"pending_dms":             pendingDMCount,
+		"channels_joined":        len(channelSummaries),
+		"unread_channel_messages": totalUnreadChannel,
+		"system_notifications":    len(sysNotifs),
+	}
+
+	// 7. Build truncation instructions
+	var instructionParts []string
+	truncated := false
+	if int64(len(pendingDMs)) < pendingDMCount {
+		truncated = true
+		instructionParts = append(instructionParts, fmt.Sprintf("Showing %d of %d pending messages. Use read_inbox to see all.", len(pendingDMs), pendingDMCount))
+	}
+	if len(mentions) >= 10 {
+		truncated = true
+		instructionParts = append(instructionParts, fmt.Sprintf("Showing %d mentions (may be more). Use search_messages to find all.", len(mentions)))
+	}
+	if len(sysNotifs) >= 5 {
+		truncated = true
+		instructionParts = append(instructionParts, fmt.Sprintf("Showing %d system notifications (may be more). Use read_inbox with from_agent='system' to see all.", len(sysNotifs)))
+	}
+
+	result := map[string]any{
+		"agent":                    agentInfo,
+		"direct_messages":          dmList,
+		"direct_messages_total":    pendingDMCount,
+		"mentions":                 mentionList,
+		"mentions_total":           len(mentions),
+		"system_notifications":       sysNotifList,
+		"system_notifications_total": len(sysNotifs),
+		"channels":                 channelSummaries,
+		"stats":                    stats,
+		"truncated":                truncated,
+	}
+
+	if len(instructionParts) > 0 {
+		result["instructions"] = strings.Join(instructionParts, " ")
+	}
+
+	return resultJSON(result)
 }
 
 // resultJSON marshals data to a JSON text MCP result.

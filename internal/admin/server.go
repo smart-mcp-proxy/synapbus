@@ -7,21 +7,33 @@ import (
 	"net"
 
 	"github.com/synapbus/synapbus/internal/agents"
+	"github.com/synapbus/synapbus/internal/attachments"
 	"github.com/synapbus/synapbus/internal/auth"
 	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/messaging"
+	"github.com/synapbus/synapbus/internal/search"
 	"github.com/synapbus/synapbus/internal/trace"
 )
 
 // Services holds references to all services the admin socket can control.
 type Services struct {
-	Users    *auth.SQLiteUserStore
-	Sessions auth.SessionStore
-	Agents   *agents.AgentService
-	Messages *messaging.MessagingService
-	Channels *channels.Service
-	Traces   trace.TraceStore
-	DataDir  string
+	Users              *auth.SQLiteUserStore
+	Sessions           auth.SessionStore
+	Agents             *agents.AgentService
+	Messages           *messaging.MessagingService
+	Channels           *channels.Service
+	Traces             trace.TraceStore
+	EmbeddingStore     *search.EmbeddingStore
+	VectorIndex        *search.VectorIndex
+	SearchService      *search.Service
+	AttachmentService  *attachments.Service
+	DataDir            string
+	RetentionWorker    RetentionStatusProvider
+}
+
+// RetentionStatusProvider provides retention status information.
+type RetentionStatusProvider interface {
+	Status() map[string]interface{}
 }
 
 // AdminServer is a Unix domain socket server for local administration.
