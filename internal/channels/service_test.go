@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -605,6 +606,159 @@ func TestService_BroadcastMessage(t *testing.T) {
 		}
 	})
 
+}
+
+// --- @mentions in BroadcastMessage tests ---
+
+func TestService_BroadcastMessage_Mentions(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	ch, _ := svc.CreateChannel(ctx, CreateChannelRequest{Name: "mentions-test", Type: TypeStandard, CreatedBy: "agent-a"})
+	svc.JoinChannel(ctx, ch.ID, "agent-b")
+	svc.JoinChannel(ctx, ch.ID, "agent-c")
+
+	t.Run("mentioned member gets mention flag in inbox", func(t *testing.T) {
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "hey @agent-b check this", 5, "")
+		if err != nil {
+			t.Fatalf("BroadcastMessage: %v", err)
+		}
+
+		// agent-b was mentioned — inbox notification should have mention:true
+		inbox, _ := svc.msgService.ReadInbox(ctx, "agent-b", messaging.ReadOptions{IncludeRead: true})
+		found := false
+		for _, m := range inbox {
+			if m.Body == "hey @agent-b check this" {
+				found = true
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				if meta["mention"] != true {
+					t.Error("agent-b inbox notification should have mention=true")
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("agent-b did not receive inbox notification")
+		}
+
+		// agent-c was NOT mentioned — inbox notification should NOT have mention:true
+		inbox, _ = svc.msgService.ReadInbox(ctx, "agent-c", messaging.ReadOptions{IncludeRead: true})
+		for _, m := range inbox {
+			if m.Body == "hey @agent-b check this" {
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				if meta["mention"] == true {
+					t.Error("agent-c should NOT have mention flag")
+				}
+				// But should still have mentioned_agents list
+				if _, ok := meta["mentioned_agents"]; !ok {
+					t.Error("agent-c metadata should have mentioned_agents list")
+				}
+				break
+			}
+		}
+	})
+
+	t.Run("channel message metadata includes mentioned_agents", func(t *testing.T) {
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "cc @agent-b and @agent-c", 5, "")
+		if err != nil {
+			t.Fatalf("BroadcastMessage: %v", err)
+		}
+
+		channelMsgs, _ := svc.msgService.GetChannelMessages(ctx, ch.ID, 10)
+		found := false
+		for _, m := range channelMsgs {
+			if m.Body == "cc @agent-b and @agent-c" {
+				found = true
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				mentioned, ok := meta["mentioned_agents"]
+				if !ok {
+					t.Error("channel message should have mentioned_agents")
+				} else {
+					list := mentioned.([]any)
+					if len(list) != 2 {
+						t.Errorf("mentioned_agents = %v, want 2 entries", list)
+					}
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("channel message not found")
+		}
+	})
+
+	t.Run("self-mention is excluded", func(t *testing.T) {
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "I am @agent-a and cc @agent-b", 5, "")
+		if err != nil {
+			t.Fatalf("BroadcastMessage: %v", err)
+		}
+
+		channelMsgs, _ := svc.msgService.GetChannelMessages(ctx, ch.ID, 10)
+		for _, m := range channelMsgs {
+			if m.Body == "I am @agent-a and cc @agent-b" {
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				mentioned := meta["mentioned_agents"].([]any)
+				for _, name := range mentioned {
+					if name == "agent-a" {
+						t.Error("sender should not be in mentioned_agents")
+					}
+				}
+				if len(mentioned) != 1 || mentioned[0] != "agent-b" {
+					t.Errorf("mentioned_agents = %v, want [agent-b]", mentioned)
+				}
+				break
+			}
+		}
+	})
+
+	t.Run("no mentions produces no mention metadata", func(t *testing.T) {
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "just a normal message", 5, "")
+		if err != nil {
+			t.Fatalf("BroadcastMessage: %v", err)
+		}
+
+		channelMsgs, _ := svc.msgService.GetChannelMessages(ctx, ch.ID, 10)
+		for _, m := range channelMsgs {
+			if m.Body == "just a normal message" {
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				if _, ok := meta["mentioned_agents"]; ok {
+					t.Error("should not have mentioned_agents when no mentions")
+				}
+				break
+			}
+		}
+	})
+
+	t.Run("non-member mention is ignored", func(t *testing.T) {
+		seedAgent(t, svc.store.(*SQLiteChannelStore).db, "outsider")
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "hey @outsider and @agent-b", 5, "")
+		if err != nil {
+			t.Fatalf("BroadcastMessage: %v", err)
+		}
+
+		channelMsgs, _ := svc.msgService.GetChannelMessages(ctx, ch.ID, 10)
+		for _, m := range channelMsgs {
+			if m.Body == "hey @outsider and @agent-b" {
+				var meta map[string]any
+				json.Unmarshal(m.Metadata, &meta)
+				mentioned := meta["mentioned_agents"].([]any)
+				for _, name := range mentioned {
+					if name == "outsider" {
+						t.Error("non-member should not be in mentioned_agents")
+					}
+				}
+				if len(mentioned) != 1 || mentioned[0] != "agent-b" {
+					t.Errorf("mentioned_agents = %v, want [agent-b]", mentioned)
+				}
+				break
+			}
+		}
+	})
 }
 
 // --- Trace recording tests ---

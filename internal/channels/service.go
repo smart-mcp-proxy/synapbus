@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -394,6 +395,9 @@ func (s *Service) UpdateChannel(ctx context.Context, channelID int64, req Update
 // BroadcastMessage sends a message to a channel. It creates a single channel
 // message (visible in the channel timeline via GetChannelMessages) and also
 // delivers individual DM notifications to each member's inbox.
+// If the message body contains @mentions, mentioned members receive a
+// "mention":true flag in their inbox notification metadata, and the channel
+// message metadata includes "mentioned_agents".
 func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAgent, body string, priority int, metadata string) ([]*messaging.Message, error) {
 	ch, err := s.store.GetChannel(ctx, channelID)
 	if err != nil {
@@ -409,41 +413,76 @@ func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAge
 		return nil, ErrNotChannelMember
 	}
 
-	// 1. Create the canonical channel message (no "to" — this is a channel post).
-	//    This matches how the Web UI sends channel messages and is what
-	//    GetChannelMessages queries for.
-	channelMeta := fmt.Sprintf(`{"channel_name":%q}`, ch.Name)
-	if metadata != "" {
-		channelMeta = fmt.Sprintf(`{"channel_name":%q,"user_metadata":%s}`, ch.Name, metadata)
+	// Get members for mentions and inbox notifications
+	members, err := s.store.GetMembers(ctx, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("get members: %w", err)
 	}
+
+	// Parse @mentions from the message body
+	mentionedNames := messaging.ParseMentions(body)
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		memberSet[m.AgentName] = true
+	}
+
+	// Filter mentions to channel members only, exclude sender
+	mentionedMembers := make(map[string]bool)
+	var mentionedAgentsList []string
+	for _, name := range mentionedNames {
+		if name == fromAgent || !memberSet[name] {
+			continue
+		}
+		if !mentionedMembers[name] {
+			mentionedMembers[name] = true
+			mentionedAgentsList = append(mentionedAgentsList, name)
+		}
+	}
+
+	// 1. Create the canonical channel message (no "to" — this is a channel post).
+	channelMetaObj := map[string]any{"channel_name": ch.Name}
+	if metadata != "" {
+		channelMetaObj["user_metadata"] = json.RawMessage(metadata)
+	}
+	if len(mentionedAgentsList) > 0 {
+		channelMetaObj["mentioned_agents"] = mentionedAgentsList
+	}
+	channelMetaBytes, _ := json.Marshal(channelMetaObj)
 
 	channelMsg, err := s.msgService.SendMessage(ctx, fromAgent, "", body, messaging.SendOptions{
 		Subject:   fmt.Sprintf("channel:%s", ch.Name),
 		Priority:  priority,
-		Metadata:  channelMeta,
+		Metadata:  string(channelMetaBytes),
 		ChannelID: &channelID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create channel message: %w", err)
 	}
 
-	// 2. Deliver inbox notifications to other members so they see it in read_inbox.
-	members, err := s.store.GetMembers(ctx, channelID)
-	if err != nil {
-		return nil, fmt.Errorf("get members: %w", err)
-	}
-
+	// 2. Deliver inbox notifications to other members.
 	recipientCount := 0
 	for _, m := range members {
 		if m.AgentName == fromAgent {
 			continue
 		}
 
-		inboxMeta := fmt.Sprintf(`{"channel_id":%d,"channel_name":%q,"channel_message_id":%d}`, channelID, ch.Name, channelMsg.ID)
+		inboxMetaObj := map[string]any{
+			"channel_id":         channelID,
+			"channel_name":       ch.Name,
+			"channel_message_id": channelMsg.ID,
+		}
+		if len(mentionedAgentsList) > 0 {
+			inboxMetaObj["mentioned_agents"] = mentionedAgentsList
+		}
+		if mentionedMembers[m.AgentName] {
+			inboxMetaObj["mention"] = true
+		}
+		inboxMetaBytes, _ := json.Marshal(inboxMetaObj)
+
 		_, err := s.msgService.SendMessage(ctx, fromAgent, m.AgentName, body, messaging.SendOptions{
 			Subject:  fmt.Sprintf("channel:%s", ch.Name),
 			Priority: priority,
-			Metadata: inboxMeta,
+			Metadata: string(inboxMetaBytes),
 		})
 		if err != nil {
 			s.logger.Error("failed to send channel notification",
@@ -462,15 +501,20 @@ func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAge
 		"from", fromAgent,
 		"message_id", channelMsg.ID,
 		"recipients", recipientCount,
+		"mentions", len(mentionedAgentsList),
 	)
 
 	if s.tracer != nil {
-		s.tracer.Record(ctx, fromAgent, "channel.broadcast", map[string]any{
+		traceData := map[string]any{
 			"channel_id":   channelID,
 			"channel_name": ch.Name,
 			"message_id":   channelMsg.ID,
 			"recipients":   recipientCount,
-		})
+		}
+		if len(mentionedAgentsList) > 0 {
+			traceData["mentioned_agents"] = mentionedAgentsList
+		}
+		s.tracer.Record(ctx, fromAgent, "channel.broadcast", traceData)
 	}
 
 	return []*messaging.Message{channelMsg}, nil
