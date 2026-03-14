@@ -37,18 +37,17 @@ func (tr *ToolRegistrar) SetSearchService(svc *search.Service) {
 }
 
 // RegisterAll registers all tools on the MCP server.
+// Note: Agent management tools (register, update, deregister) are NOT exposed via MCP.
+// Agents are managed exclusively through the Web UI. MCP is for messaging only.
 func (tr *ToolRegistrar) RegisterAll(s *server.MCPServer) {
 	s.AddTool(tr.sendMessageTool(), tr.handleSendMessage)
 	s.AddTool(tr.readInboxTool(), tr.handleReadInbox)
 	s.AddTool(tr.claimMessagesTool(), tr.handleClaimMessages)
 	s.AddTool(tr.markDoneTool(), tr.handleMarkDone)
 	s.AddTool(tr.searchMessagesTool(), tr.handleSearchMessages)
-	s.AddTool(tr.registerAgentTool(), tr.handleRegisterAgent)
 	s.AddTool(tr.discoverAgentsTool(), tr.handleDiscoverAgents)
-	s.AddTool(tr.updateAgentTool(), tr.handleUpdateAgent)
-	s.AddTool(tr.deregisterAgentTool(), tr.handleDeregisterAgent)
 
-	tr.logger.Info("all MCP tools registered", "count", 9)
+	tr.logger.Info("all MCP tools registered", "count", 6)
 }
 
 // --- Tool Definitions ---
@@ -106,16 +105,6 @@ func (tr *ToolRegistrar) searchMessagesTool() mcp.Tool {
 	)
 }
 
-func (tr *ToolRegistrar) registerAgentTool() mcp.Tool {
-	return mcp.NewTool("register_agent",
-		mcp.WithDescription("Register a new agent and receive an API key"),
-		mcp.WithString("name", mcp.Description("Unique agent name"), mcp.Required()),
-		mcp.WithString("display_name", mcp.Description("Human-readable display name")),
-		mcp.WithString("type", mcp.Description("Agent type: 'ai' or 'human' (default 'ai')")),
-		mcp.WithString("capabilities", mcp.Description("JSON capabilities object")),
-	)
-}
-
 func (tr *ToolRegistrar) discoverAgentsTool() mcp.Tool {
 	return mcp.NewTool("discover_agents",
 		mcp.WithDescription("Discover agents by capability keywords"),
@@ -123,19 +112,6 @@ func (tr *ToolRegistrar) discoverAgentsTool() mcp.Tool {
 	)
 }
 
-func (tr *ToolRegistrar) updateAgentTool() mcp.Tool {
-	return mcp.NewTool("update_agent",
-		mcp.WithDescription("Update the authenticated agent's display name or capabilities"),
-		mcp.WithString("display_name", mcp.Description("New display name")),
-		mcp.WithString("capabilities", mcp.Description("New JSON capabilities object")),
-	)
-}
-
-func (tr *ToolRegistrar) deregisterAgentTool() mcp.Tool {
-	return mcp.NewTool("deregister_agent",
-		mcp.WithDescription("Deregister the authenticated agent (soft delete)"),
-	)
-}
 
 // --- Tool Handlers ---
 
@@ -352,39 +328,6 @@ func (tr *ToolRegistrar) handleSearchMessages(ctx context.Context, req mcp.CallT
 	})
 }
 
-func (tr *ToolRegistrar) handleRegisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// register_agent does not require authentication
-	name := req.GetString("name", "")
-	if name == "" {
-		return mcp.NewToolResultError("'name' parameter is required"), nil
-	}
-
-	displayName := req.GetString("display_name", name)
-	agentType := req.GetString("type", "ai")
-	capsStr := req.GetString("capabilities", "{}")
-
-	var caps json.RawMessage
-	if capsStr != "" {
-		if !json.Valid([]byte(capsStr)) {
-			return mcp.NewToolResultError("capabilities must be valid JSON"), nil
-		}
-		caps = json.RawMessage(capsStr)
-	}
-
-	// Use owner_id=1 as default (first user). In production, this would come from auth.
-	agent, apiKey, err := tr.agentService.Register(ctx, name, displayName, agentType, caps, 1)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("register_agent failed: %s", err)), nil
-	}
-
-	return resultJSON(map[string]any{
-		"agent_id":   agent.ID,
-		"name":       agent.Name,
-		"api_key":    apiKey,
-		"created_at": agent.CreatedAt,
-	})
-}
-
 func (tr *ToolRegistrar) handleDiscoverAgents(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	agentName, ok := extractAgentName(ctx)
 	if !ok {
@@ -414,57 +357,6 @@ func (tr *ToolRegistrar) handleDiscoverAgents(ctx context.Context, req mcp.CallT
 	return resultJSON(map[string]any{
 		"agents": result,
 		"count":  len(result),
-	})
-}
-
-func (tr *ToolRegistrar) handleUpdateAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agentName, ok := extractAgentName(ctx)
-	if !ok {
-		return mcp.NewToolResultError("authentication required"), nil
-	}
-
-	displayName := req.GetString("display_name", "")
-	capsStr := req.GetString("capabilities", "")
-
-	var caps json.RawMessage
-	if capsStr != "" {
-		if !json.Valid([]byte(capsStr)) {
-			return mcp.NewToolResultError("capabilities must be valid JSON"), nil
-		}
-		caps = json.RawMessage(capsStr)
-	}
-
-	agent, err := tr.agentService.UpdateAgent(ctx, agentName, displayName, caps)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("update_agent failed: %s", err)), nil
-	}
-
-	return resultJSON(map[string]any{
-		"name":         agent.Name,
-		"display_name": agent.DisplayName,
-		"capabilities": agent.Capabilities,
-	})
-}
-
-func (tr *ToolRegistrar) handleDeregisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agentName, ok := extractAgentName(ctx)
-	if !ok {
-		return mcp.NewToolResultError("authentication required"), nil
-	}
-
-	// Get the agent to find owner_id
-	agent, err := tr.agentService.GetAgent(ctx, agentName)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("deregister_agent failed: %s", err)), nil
-	}
-
-	if err := tr.agentService.Deregister(ctx, agentName, agent.OwnerID); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("deregister_agent failed: %s", err)), nil
-	}
-
-	return resultJSON(map[string]any{
-		"name":   agentName,
-		"status": "deregistered",
 	})
 }
 

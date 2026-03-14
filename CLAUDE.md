@@ -64,6 +64,7 @@ make lint           # Run linters
 |----------|-------------|---------|
 | `SYNAPBUS_PORT` | HTTP server port | `8080` |
 | `SYNAPBUS_DATA_DIR` | Data directory (SQLite DB, attachments, vector index) | `./data` |
+| `SYNAPBUS_BASE_URL` | Public base URL for OAuth metadata (required for LAN/remote) | auto-detect from Host header |
 | `SYNAPBUS_EMBEDDING_PROVIDER` | Embedding provider: `openai`, `gemini`, `ollama` | (none) |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings | (none) |
 | `GEMINI_API_KEY` | Google Gemini API key for embeddings | (none) |
@@ -88,3 +89,10 @@ make lint           # Run linters
 4. **Multi-tenant with ownership** — every agent has a human owner
 5. **Observable by default** — all agent actions traced, searchable, auditable
 6. **Progressive complexity** — basic messaging first, advanced features layered on top
+
+## Active Technologies
+- Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI) (002-mcp-auth-ux-polish)
+- modernc.org/sqlite (pure Go), TFMV/hnsw (vectors) (002-mcp-auth-ux-polish)
+
+## Recent Changes
+- 002-mcp-auth-ux-polish: Added Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI)

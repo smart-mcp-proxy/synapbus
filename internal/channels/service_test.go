@@ -634,5 +634,169 @@ func TestService_TracesRecorded(t *testing.T) {
 	}
 }
 
+// --- EnsureMyAgentsChannel tests ---
+
+func TestService_EnsureMyAgentsChannel_CreatesOnFirstCall(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	err := svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+	if err != nil {
+		t.Fatalf("EnsureMyAgentsChannel: %v", err)
+	}
+
+	ch, err := svc.GetChannelByName(ctx, "my-agents-testowner")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+
+	if ch.Name != "my-agents-testowner" {
+		t.Errorf("name = %s, want my-agents-testowner", ch.Name)
+	}
+	if !ch.IsPrivate {
+		t.Error("channel should be private")
+	}
+	if !ch.IsSystem {
+		t.Error("channel should be system")
+	}
+	if ch.CreatedBy != "agent-a" {
+		t.Errorf("created_by = %s, want agent-a", ch.CreatedBy)
+	}
+
+	// Verify agent-a is the owner
+	member, err := svc.store.GetMember(ctx, ch.ID, "agent-a")
+	if err != nil {
+		t.Fatalf("GetMember: %v", err)
+	}
+	if member.Role != RoleOwner {
+		t.Errorf("role = %s, want owner", member.Role)
+	}
+}
+
+func TestService_EnsureMyAgentsChannel_Idempotent(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	// First call creates the channel
+	err := svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+	if err != nil {
+		t.Fatalf("first EnsureMyAgentsChannel: %v", err)
+	}
+
+	ch1, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+
+	// Second call should be a no-op
+	err = svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+	if err != nil {
+		t.Fatalf("second EnsureMyAgentsChannel: %v", err)
+	}
+
+	ch2, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+
+	if ch1.ID != ch2.ID {
+		t.Errorf("channel IDs should match: %d != %d", ch1.ID, ch2.ID)
+	}
+
+	// Should still only have one member (the owner)
+	members, err := svc.GetMembers(ctx, ch1.ID)
+	if err != nil {
+		t.Fatalf("GetMembers: %v", err)
+	}
+	if len(members) != 1 {
+		t.Errorf("got %d members, want 1", len(members))
+	}
+}
+
+func TestService_EnsureMyAgentsChannel_PrivateAndSystem(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+
+	ch, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+	if !ch.IsPrivate {
+		t.Error("my-agents channel should be private")
+	}
+	if !ch.IsSystem {
+		t.Error("my-agents channel should be system")
+	}
+}
+
+func TestService_LeaveChannel_SystemChannelBlocked(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+	ch, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+
+	// Add agent-b as a member directly
+	svc.store.AddMember(ctx, &Membership{
+		ChannelID: ch.ID,
+		AgentName: "agent-b",
+		Role:      RoleMember,
+	})
+
+	// Any member should not be able to leave a system channel
+	err := svc.LeaveChannel(ctx, ch.ID, "agent-b")
+	if !errors.Is(err, ErrSystemChannel) {
+		t.Errorf("expected ErrSystemChannel, got %v", err)
+	}
+}
+
+func TestService_DeleteChannel_SystemChannelBlocked(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+	ch, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+
+	err := svc.DeleteChannel(ctx, ch.ID)
+	if !errors.Is(err, ErrSystemChannel) {
+		t.Errorf("expected ErrSystemChannel, got %v", err)
+	}
+
+	// Regular channel should be deletable
+	regularCh, _ := svc.CreateChannel(ctx, CreateChannelRequest{
+		Name:      "deletable",
+		Type:      TypeStandard,
+		CreatedBy: "agent-a",
+	})
+	err = svc.DeleteChannel(ctx, regularCh.ID)
+	if err != nil {
+		t.Fatalf("DeleteChannel regular: %v", err)
+	}
+}
+
+func TestService_JoinMyAgentsChannel(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	// Create my-agents channel
+	svc.EnsureMyAgentsChannel(ctx, "testowner", "agent-a")
+
+	// Join agent-b to the my-agents channel
+	err := svc.JoinMyAgentsChannel(ctx, "testowner", "agent-b")
+	if err != nil {
+		t.Fatalf("JoinMyAgentsChannel: %v", err)
+	}
+
+	ch, _ := svc.GetChannelByName(ctx, "my-agents-testowner")
+	isMember, _ := svc.store.IsMember(ctx, ch.ID, "agent-b")
+	if !isMember {
+		t.Error("agent-b should be a member of my-agents channel")
+	}
+}
+
+func TestService_JoinMyAgentsChannel_NoChannelIsNoop(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	// If the channel doesn't exist yet, this should be a no-op
+	err := svc.JoinMyAgentsChannel(ctx, "nonexistent", "agent-a")
+	if err != nil {
+		t.Fatalf("JoinMyAgentsChannel should be no-op when channel missing: %v", err)
+	}
+}
+
 // suppress unused import warning
 var _ = storage.RunMigrations

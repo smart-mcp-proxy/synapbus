@@ -11,14 +11,16 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/trace"
 )
 
 // AgentService provides business logic for agent registry operations.
 type AgentService struct {
-	store  AgentStore
-	tracer *trace.Tracer
-	logger *slog.Logger
+	store           AgentStore
+	tracer          *trace.Tracer
+	deadLetterStore *messaging.DeadLetterStore
+	logger          *slog.Logger
 }
 
 // NewAgentService creates a new agent service.
@@ -28,6 +30,11 @@ func NewAgentService(store AgentStore, tracer *trace.Tracer) *AgentService {
 		tracer: tracer,
 		logger: slog.Default().With("component", "agents"),
 	}
+}
+
+// SetDeadLetterStore sets the dead letter store for capturing messages on agent deregistration.
+func (s *AgentService) SetDeadLetterStore(dls *messaging.DeadLetterStore) {
+	s.deadLetterStore = dls
 }
 
 // Register creates a new agent with a generated API key.
@@ -176,6 +183,7 @@ func (s *AgentService) UpdateAgent(ctx context.Context, name string, displayName
 }
 
 // Deregister soft-deletes an agent. Only the owner can deregister.
+// Pending/processing messages are captured as dead letters before deactivation.
 func (s *AgentService) Deregister(ctx context.Context, name string, ownerID int64) error {
 	agent, err := s.store.GetAgentByName(ctx, name)
 	if err != nil {
@@ -189,6 +197,20 @@ func (s *AgentService) Deregister(ctx context.Context, name string, ownerID int6
 		return fmt.Errorf("only the agent's owner can deregister it")
 	}
 
+	// Capture pending/processing messages as dead letters before deactivation
+	var deadLetterCount int
+	if s.deadLetterStore != nil {
+		captured, err := s.deadLetterStore.CaptureDeadLetters(ctx, agent.OwnerID, name)
+		if err != nil {
+			s.logger.Warn("failed to capture dead letters",
+				"agent", name,
+				"error", err,
+			)
+		} else {
+			deadLetterCount = captured
+		}
+	}
+
 	if err := s.store.DeactivateAgent(ctx, name); err != nil {
 		return fmt.Errorf("deactivate agent: %w", err)
 	}
@@ -196,12 +218,14 @@ func (s *AgentService) Deregister(ctx context.Context, name string, ownerID int6
 	s.logger.Info("agent deregistered",
 		"name", name,
 		"owner_id", ownerID,
+		"dead_letters_captured", deadLetterCount,
 	)
 
 	if s.tracer != nil {
 		s.tracer.Record(ctx, name, "deregister_agent", map[string]any{
-			"agent_id": agent.ID,
-			"owner_id": ownerID,
+			"agent_id":              agent.ID,
+			"owner_id":              ownerID,
+			"dead_letters_captured": deadLetterCount,
 		})
 	}
 
@@ -265,6 +289,60 @@ func (s *AgentService) RevokeKey(ctx context.Context, name string, ownerID int64
 	}
 
 	return agent, apiKey, nil
+}
+
+// GetHumanAgentForUser returns the human-type agent for a given owner.
+// Returns nil, nil if no human agent exists for this user.
+func (s *AgentService) GetHumanAgentForUser(ctx context.Context, ownerID int64) (*Agent, error) {
+	agent, err := s.store.GetHumanAgentByOwner(ctx, ownerID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get human agent: %w", err)
+	}
+	return agent, nil
+}
+
+// EnsureHumanAgent creates a human-type agent matching the username if one doesn't already exist.
+// This is called on login to ensure every user has a human identity for sending messages from the UI.
+func (s *AgentService) EnsureHumanAgent(ctx context.Context, username, displayName string, ownerID int64) (*Agent, error) {
+	// Check if user already has a human agent
+	agents, err := s.store.ListAgentsByOwner(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list agents: %w", err)
+	}
+
+	for _, a := range agents {
+		if a.Type == "human" && a.Status == "active" {
+			return a, nil
+		}
+	}
+
+	// Create human agent matching the username
+	if displayName == "" {
+		displayName = username
+	}
+
+	// Try username first, then username-human if taken
+	agentName := username
+	agent, _, err := s.Register(ctx, agentName, displayName, "human", nil, ownerID)
+	if err != nil {
+		// Name collision — try with suffix
+		agentName = username + "-human"
+		agent, _, err = s.Register(ctx, agentName, displayName, "human", nil, ownerID)
+		if err != nil {
+			s.logger.Warn("could not auto-create human agent", "username", username, "error", err)
+			return nil, nil
+		}
+	}
+
+	s.logger.Info("auto-created human agent for user",
+		"username", username,
+		"agent_name", agent.Name,
+		"owner_id", ownerID,
+	)
+	return agent, nil
 }
 
 // generateAPIKey creates a cryptographically random API key (32 bytes, hex encoded).

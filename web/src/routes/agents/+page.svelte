@@ -9,7 +9,6 @@
 
 	let newName = $state('');
 	let newDisplayName = $state('');
-	let newType = 'ai'; // agents are always AI; human accounts created via CLI
 	let registering = $state(false);
 	let registerError = $state('');
 	let newApiKey = $state('');
@@ -19,7 +18,7 @@
 		loadingData = true;
 		try {
 			const res = await agentsApi.list();
-			agentList = res.agents;
+			agentList = (res.agents || []).filter((a: any) => a.type !== 'human');
 		} catch {
 			// handled
 		} finally {
@@ -48,7 +47,7 @@
 			const res = await agentsApi.register({
 				name: newName.trim(),
 				display_name: newDisplayName.trim() || undefined,
-				type: newType
+				type: 'ai'
 			});
 			newApiKey = res.api_key;
 			await loadAgents();
@@ -64,7 +63,6 @@
 		newApiKey = '';
 		newName = '';
 		newDisplayName = '';
-		newType = 'ai';
 		registerError = '';
 	}
 

@@ -38,9 +38,10 @@ func NewFositeStore(db *sql.DB, bcryptCost int) *FositeStore {
 
 // fositeSession implements fosite.Session for token storage.
 type fositeSession struct {
-	UserID      int64             `json:"user_id"`
-	Username    string            `json:"username"`
-	Subject     string            `json:"subject"`
+	UserID       int64                          `json:"user_id"`
+	Username     string                         `json:"username"`
+	Subject      string                         `json:"subject"`
+	AgentName    string                         `json:"agent_name,omitempty"`
 	ExpiresAtMap map[fosite.TokenType]time.Time `json:"expires_at_map"`
 }
 
@@ -80,6 +81,7 @@ func (s *fositeSession) Clone() fosite.Session {
 		UserID:       s.UserID,
 		Username:     s.Username,
 		Subject:      s.Subject,
+		AgentName:    s.AgentName,
 		ExpiresAtMap: expiresAtMap,
 	}
 }
@@ -324,8 +326,25 @@ func (s *FositeStore) RevokeAccessToken(ctx context.Context, requestID string) e
 // --- pkce.PKCERequestStorage ---
 
 // CreatePKCERequestSession stores PKCE data for an authorization code.
+// Fosite calls this after CreateAuthorizeCodeSession with the same code signature.
+// We update the auth code row with the PKCE challenge from the request form.
 func (s *FositeStore) CreatePKCERequestSession(ctx context.Context, signature string, request fosite.Requester) error {
-	// PKCE data is stored as part of the authorization code session
+	form := request.GetRequestForm()
+	codeChallenge := form.Get("code_challenge")
+	codeChallengeMethod := form.Get("code_challenge_method")
+
+	if codeChallenge == "" {
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE oauth_authorization_codes SET code_challenge = ?, code_challenge_method = ? WHERE code = ?`,
+		codeChallenge, codeChallengeMethod, signature,
+	)
+	if err != nil {
+		s.logger.Error("store PKCE session failed", "error", err)
+		return fosite.ErrServerError
+	}
 	return nil
 }
 
@@ -487,7 +506,7 @@ func (c *fositeClient) GetRedirectURIs() []string          { return c.redirectUR
 func (c *fositeClient) GetGrantTypes() fosite.Arguments    { return fosite.Arguments(c.grantTypes) }
 func (c *fositeClient) GetResponseTypes() fosite.Arguments { return fosite.Arguments{"code"} }
 func (c *fositeClient) GetScopes() fosite.Arguments        { return fosite.Arguments(c.scopes) }
-func (c *fositeClient) IsPublic() bool                     { return false }
+func (c *fositeClient) IsPublic() bool                     { return len(c.secretHash) == 0 }
 func (c *fositeClient) GetAudience() fosite.Arguments      { return fosite.Arguments{} }
 
 // GetResponseModes implements fosite.ResponseModeClient.

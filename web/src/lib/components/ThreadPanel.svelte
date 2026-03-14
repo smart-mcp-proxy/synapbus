@@ -8,11 +8,15 @@
 	let replyBody = $state('');
 	let sending = $state(false);
 	let error = $state('');
+	let loadError = $state('');
 
-	let currentThread = $state<{ messageId: number; conversationId: number } | null>(null);
+	let currentThread = $state<{ messageId: number; conversationId: number; fromAgent?: string } | null>(null);
 
 	activeThread.subscribe((val) => {
 		currentThread = val;
+		loadError = '';
+		error = '';
+		replyBody = '';
 		if (val) {
 			loadThread(val.conversationId);
 		} else {
@@ -23,12 +27,13 @@
 
 	async function loadThread(conversationId: number) {
 		loadingThread = true;
+		loadError = '';
 		try {
 			const res = await convsApi.get(conversationId);
 			conversation = res.conversation;
 			threadMessages = res.messages;
-		} catch {
-			// handled
+		} catch (err: any) {
+			loadError = err.message || 'Could not load thread';
 		} finally {
 			loadingThread = false;
 		}
@@ -36,15 +41,25 @@
 
 	async function sendReply(e: SubmitEvent) {
 		e.preventDefault();
-		if (!replyBody.trim() || threadMessages.length === 0 || !currentThread) return;
+		if (!replyBody.trim() || !currentThread) return;
+
+		// Determine recipient: use last message's sender, or fallback to stored fromAgent
+		const recipient = threadMessages.length > 0
+			? threadMessages[threadMessages.length - 1].from_agent
+			: currentThread.fromAgent;
+
+		if (!recipient) {
+			error = 'Cannot determine recipient';
+			return;
+		}
 
 		sending = true;
 		error = '';
 		try {
-			const lastMsg = threadMessages[threadMessages.length - 1];
 			await messagesApi.send({
-				to: lastMsg.from_agent,
+				to: recipient,
 				body: replyBody.trim(),
+				reply_to: currentThread.messageId,
 				subject: conversation?.subject
 			});
 			replyBody = '';
@@ -93,6 +108,8 @@
 				<h3 class="font-display font-bold text-sm text-text-primary truncate">Thread</h3>
 				{#if conversation}
 					<p class="text-[10px] text-text-secondary truncate">{conversation.subject || 'Conversation #' + conversation.id}</p>
+				{:else if currentThread.fromAgent}
+					<p class="text-[10px] text-text-secondary truncate">Reply to {currentThread.fromAgent}</p>
 				{/if}
 			</div>
 			<button
@@ -120,6 +137,15 @@
 						</div>
 					{/each}
 				</div>
+			{:else if loadError}
+				<div class="p-4 text-center text-text-secondary text-xs">
+					<p>Thread history unavailable</p>
+					<p class="mt-1 text-[10px]">You can still send a reply below</p>
+				</div>
+			{:else if threadMessages.length === 0}
+				<div class="p-4 text-center text-text-secondary text-xs">
+					No messages in this thread yet
+				</div>
 			{:else}
 				{#each threadMessages as msg, i (msg.id)}
 					<div class="px-4 py-3 hover:bg-bg-tertiary/50 transition-colors {i === 0 ? 'border-b border-border bg-bg-primary/30' : ''}">
@@ -131,7 +157,9 @@
 								<div class="flex items-center gap-2 mb-0.5">
 									<span class="font-semibold text-xs text-text-primary">{msg.from_agent}</span>
 									<span class="text-[10px] text-text-secondary">{formatTime(msg.created_at)}</span>
-									<span class="{statusClass(msg.status)} text-[10px]">{msg.status}</span>
+									{#if msg.status !== 'done'}
+										<span class="{statusClass(msg.status)} text-[10px]">{msg.status}</span>
+									{/if}
 								</div>
 								<p class="text-xs text-text-primary/90 whitespace-pre-wrap leading-relaxed">{msg.body}</p>
 							</div>

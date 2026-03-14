@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/synapbus/synapbus/internal/agents"
+	"github.com/synapbus/synapbus/internal/auth"
 	"github.com/synapbus/synapbus/internal/messaging"
 )
 
@@ -256,13 +257,35 @@ func (h *MessagesHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.From == "" {
+	// For session-authenticated users (Web UI), always send as the human agent
+	// regardless of what `from` was provided in the request.
+	if _, isSession := auth.SessionIDFromContext(r.Context()); isSession {
+		humanAgent, err := h.agentService.GetHumanAgentForUser(r.Context(), ownerID)
+		if err != nil {
+			h.logger.Error("get human agent failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, errorBody("server_error", "Failed to determine sender"))
+			return
+		}
+		if humanAgent == nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("no_human_agent", "No human agent found. Please log in again to auto-create one."))
+			return
+		}
+		req.From = humanAgent.Name
+	} else if req.From == "" {
+		// Non-session auth (API key, bearer token): fall back to finding an agent
 		ownedAgents, err := h.agentService.ListAgents(r.Context(), ownerID)
 		if err != nil || len(ownedAgents) == 0 {
 			writeJSON(w, http.StatusBadRequest, errorBody("no_agents", "No agents registered. Register an agent first."))
 			return
 		}
+		// Prefer human-type agent
 		req.From = ownedAgents[0].Name
+		for _, a := range ownedAgents {
+			if a.Type == "human" {
+				req.From = a.Name
+				break
+			}
+		}
 	}
 
 	if !h.isAgentOwnedBy(r, req.From, ownerID) {

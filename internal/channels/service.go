@@ -48,6 +48,7 @@ func (s *Service) CreateChannel(ctx context.Context, req CreateChannelRequest) (
 		Topic:       req.Topic,
 		Type:        chType,
 		IsPrivate:   req.IsPrivate,
+		IsSystem:    req.IsSystem,
 		CreatedBy:   req.CreatedBy,
 	}
 
@@ -147,6 +148,11 @@ func (s *Service) LeaveChannel(ctx context.Context, channelID int64, agentName s
 		return err
 	}
 
+	// System channels cannot be left
+	if ch.IsSystem {
+		return ErrSystemChannel
+	}
+
 	// Check membership and role
 	member, err := s.store.GetMember(ctx, channelID, agentName)
 	if err != nil {
@@ -172,6 +178,29 @@ func (s *Service) LeaveChannel(ctx context.Context, channelID int64, agentName s
 			"channel_name": ch.Name,
 		})
 	}
+
+	return nil
+}
+
+// DeleteChannel deletes a channel by ID. System channels cannot be deleted.
+func (s *Service) DeleteChannel(ctx context.Context, channelID int64) error {
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return err
+	}
+
+	if ch.IsSystem {
+		return ErrSystemChannel
+	}
+
+	if err := s.store.DeleteChannel(ctx, channelID); err != nil {
+		return err
+	}
+
+	s.logger.Info("channel deleted",
+		"channel_id", channelID,
+		"channel_name", ch.Name,
+	)
 
 	return nil
 }
@@ -434,4 +463,102 @@ func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAge
 // GetMembers returns all members of a channel.
 func (s *Service) GetMembers(ctx context.Context, channelID int64) ([]*Membership, error) {
 	return s.store.GetMembers(ctx, channelID)
+}
+
+// MyAgentsChannelName returns the canonical my-agents channel name for a username.
+func MyAgentsChannelName(username string) string {
+	return NormalizeChannelName("my-agents-" + username)
+}
+
+// EnsureMyAgentsChannel creates the private system channel "my-agents-{username}"
+// if it does not already exist, and ensures the human agent is the owner.
+// This method is idempotent.
+func (s *Service) EnsureMyAgentsChannel(ctx context.Context, username string, humanAgentName string) error {
+	channelName := MyAgentsChannelName(username)
+
+	ch, err := s.store.GetChannelByName(ctx, channelName)
+	if err == nil {
+		// Channel already exists — ensure human agent is a member
+		isMember, err := s.store.IsMember(ctx, ch.ID, humanAgentName)
+		if err != nil {
+			return fmt.Errorf("check membership: %w", err)
+		}
+		if !isMember {
+			member := &Membership{
+				ChannelID: ch.ID,
+				AgentName: humanAgentName,
+				Role:      RoleOwner,
+			}
+			if err := s.store.AddMember(ctx, member); err != nil {
+				return fmt.Errorf("add owner to my-agents channel: %w", err)
+			}
+		}
+		return nil
+	}
+	if err != ErrChannelNotFound {
+		return fmt.Errorf("check my-agents channel: %w", err)
+	}
+
+	// Channel does not exist — create it
+	_, err = s.CreateChannel(ctx, CreateChannelRequest{
+		Name:        channelName,
+		Description: fmt.Sprintf("Private command channel for all agents owned by %s", username),
+		Type:        TypeStandard,
+		IsPrivate:   true,
+		IsSystem:    true,
+		CreatedBy:   humanAgentName,
+	})
+	if err != nil {
+		// Another goroutine may have created it concurrently
+		if err == ErrChannelNameConflict {
+			return nil
+		}
+		return fmt.Errorf("create my-agents channel: %w", err)
+	}
+
+	s.logger.Info("my-agents channel created",
+		"channel", channelName,
+		"owner", humanAgentName,
+	)
+
+	return nil
+}
+
+// JoinMyAgentsChannel adds an agent to the owner's my-agents channel.
+// If the channel does not exist, this is a no-op (best effort).
+func (s *Service) JoinMyAgentsChannel(ctx context.Context, username string, agentName string) error {
+	channelName := MyAgentsChannelName(username)
+
+	ch, err := s.store.GetChannelByName(ctx, channelName)
+	if err != nil {
+		if err == ErrChannelNotFound {
+			return nil // channel doesn't exist yet, no-op
+		}
+		return fmt.Errorf("get my-agents channel: %w", err)
+	}
+
+	// Check if already a member (idempotent)
+	isMember, err := s.store.IsMember(ctx, ch.ID, agentName)
+	if err != nil {
+		return fmt.Errorf("check membership: %w", err)
+	}
+	if isMember {
+		return nil
+	}
+
+	member := &Membership{
+		ChannelID: ch.ID,
+		AgentName: agentName,
+		Role:      RoleMember,
+	}
+	if err := s.store.AddMember(ctx, member); err != nil {
+		return fmt.Errorf("add agent to my-agents channel: %w", err)
+	}
+
+	s.logger.Info("agent joined my-agents channel",
+		"channel", channelName,
+		"agent", agentName,
+	)
+
+	return nil
 }

@@ -27,6 +27,11 @@
 		try {
 			const res = await agentsApi.get(agentName);
 			agent = res.agent;
+			// Human agents cannot be managed via this page
+			if (agent?.type === 'human') {
+				goto('/agents');
+				return;
+			}
 			traces = res.traces;
 			// Populate access rights from capabilities
 			const caps = agent.capabilities || {};

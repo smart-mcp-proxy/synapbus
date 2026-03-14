@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -330,4 +331,228 @@ func TestHandlers_ChangePassword(t *testing.T) {
 			t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 		}
 	})
+}
+
+// T018: Test OAuth metadata endpoint returns valid JSON with required fields.
+func TestHandlers_OAuthMetadata(t *testing.T) {
+	h, _ := setupHandlers(t)
+	h.config.IssuerURL = "http://localhost:8080"
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleOAuthMetadata(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", contentType)
+	}
+
+	var metadata map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+
+	// Verify required fields
+	requiredFields := []string{
+		"issuer",
+		"authorization_endpoint",
+		"token_endpoint",
+		"token_endpoint_auth_methods_supported",
+		"response_types_supported",
+		"grant_types_supported",
+		"code_challenge_methods_supported",
+		"scopes_supported",
+	}
+
+	for _, field := range requiredFields {
+		if metadata[field] == nil {
+			t.Errorf("missing required field: %s", field)
+		}
+	}
+
+	// Verify issuer matches config
+	if metadata["issuer"] != "http://localhost:8080" {
+		t.Errorf("issuer = %v, want http://localhost:8080", metadata["issuer"])
+	}
+
+	// Verify endpoints contain base URL
+	if authEndpoint, ok := metadata["authorization_endpoint"].(string); ok {
+		if authEndpoint != "http://localhost:8080/oauth/authorize" {
+			t.Errorf("authorization_endpoint = %q, want http://localhost:8080/oauth/authorize", authEndpoint)
+		}
+	}
+
+	if tokenEndpoint, ok := metadata["token_endpoint"].(string); ok {
+		if tokenEndpoint != "http://localhost:8080/oauth/token" {
+			t.Errorf("token_endpoint = %q, want http://localhost:8080/oauth/token", tokenEndpoint)
+		}
+	}
+
+	// Verify S256 is supported
+	if methods, ok := metadata["code_challenge_methods_supported"].([]any); ok {
+		found := false
+		for _, m := range methods {
+			if m == "S256" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("S256 should be in code_challenge_methods_supported")
+		}
+	}
+
+	// Verify "mcp" scope is supported
+	if scopes, ok := metadata["scopes_supported"].([]any); ok {
+		found := false
+		for _, s := range scopes {
+			if s == "mcp" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("mcp should be in scopes_supported")
+		}
+	}
+}
+
+// T018: Test OAuth metadata with POST returns 405.
+func TestHandlers_OAuthMetadata_MethodNotAllowed(t *testing.T) {
+	h, _ := setupHandlers(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/.well-known/oauth-authorization-server", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleOAuthMetadata(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// mockAgentLister implements AgentLister for testing.
+type mockAgentLister struct {
+	agents []AgentInfo
+}
+
+func (m *mockAgentLister) ListAgentsByOwner(ctx context.Context, ownerID int64) ([]AgentInfo, error) {
+	return m.agents, nil
+}
+
+// T019: Test authorize page renders HTML with login form when unauthenticated.
+func TestHandlers_AuthorizeGet_LoginForm(t *testing.T) {
+	h, _ := setupHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000&state=abc123&scope=mcp&code_challenge=challenge&code_challenge_method=S256", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleAuthorizeGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	body := rr.Body.String()
+
+	// Content-Type header should be HTML
+	ct := rr.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	// Should contain login form elements
+	if !strings.Contains(body, "<form") {
+		t.Error("expected HTML form in response")
+	}
+	if !strings.Contains(body, "username") {
+		t.Error("expected username field in login form")
+	}
+	if !strings.Contains(body, "password") {
+		t.Error("expected password field in login form")
+	}
+	// Should contain hidden OAuth params
+	if !strings.Contains(body, "test-client") {
+		t.Error("expected client_id in hidden fields")
+	}
+	if !strings.Contains(body, "abc123") {
+		t.Error("expected state in hidden fields")
+	}
+}
+
+// T019: Test authorize page renders agent selector when logged in.
+func TestHandlers_AuthorizeGet_AgentSelector(t *testing.T) {
+	h, db := setupHandlers(t)
+	ctx := context.Background()
+
+	// Set up agent lister
+	h.agentLister = &mockAgentLister{
+		agents: []AgentInfo{
+			{Name: "my-bot", DisplayName: "My Bot", Type: "ai"},
+			{Name: "my-human", DisplayName: "My Human", Type: "human"},
+		},
+	}
+
+	// Create user and session
+	userStore := NewSQLiteUserStore(db, 10)
+	sessStore := NewSQLiteSessionStore(db)
+	user, _ := userStore.CreateUser(ctx, "authzuser", "password123", "Authz User")
+	session, _ := sessStore.CreateSession(ctx, user.ID, 24*time.Hour)
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000&state=xyz&scope=mcp&code_challenge=ch&code_challenge_method=S256", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: session.SessionID})
+	rr := httptest.NewRecorder()
+
+	h.HandleAuthorizeGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	body := rr.Body.String()
+
+	// Should show agent selector, not login form
+	if !strings.Contains(body, "agent_name") {
+		t.Error("expected agent_name selector in response")
+	}
+	if !strings.Contains(body, "my-bot") {
+		t.Error("expected agent name 'my-bot' in dropdown")
+	}
+	if !strings.Contains(body, "my-human") {
+		t.Error("expected agent name 'my-human' in dropdown")
+	}
+	// Should show logged-in user
+	if !strings.Contains(body, "authzuser") {
+		t.Error("expected username in response")
+	}
+	// Should have Authorize button
+	if !strings.Contains(body, "Authorize") {
+		t.Error("expected Authorize button")
+	}
+}
+
+// T019: Test authorize page shows message when user has no agents.
+func TestHandlers_AuthorizeGet_NoAgents(t *testing.T) {
+	h, db := setupHandlers(t)
+	ctx := context.Background()
+
+	h.agentLister = &mockAgentLister{agents: []AgentInfo{}}
+
+	userStore := NewSQLiteUserStore(db, 10)
+	sessStore := NewSQLiteSessionStore(db)
+	user, _ := userStore.CreateUser(ctx, "noagentuser", "password123", "")
+	session, _ := sessStore.CreateSession(ctx, user.ID, 24*time.Hour)
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000&state=xyz&scope=mcp&code_challenge=ch&code_challenge_method=S256", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: session.SessionID})
+	rr := httptest.NewRecorder()
+
+	h.HandleAuthorizeGet(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "No agents registered yet") {
+		t.Error("expected 'No agents registered yet' message when user has no agents")
+	}
 }

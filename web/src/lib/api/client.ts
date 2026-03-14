@@ -111,6 +111,20 @@ export const channels = {
 	}
 };
 
+// Dead Letters
+export const deadLetters = {
+	list: (opts?: { acknowledged?: boolean; limit?: number }) => {
+		const qs = new URLSearchParams();
+		if (opts?.acknowledged) qs.set('acknowledged', 'true');
+		if (opts?.limit) qs.set('limit', String(opts.limit));
+		const q = qs.toString();
+		return request<{ dead_letters: any[]; total: number }>('GET', `/api/dead-letters${q ? '?' + q : ''}`);
+	},
+	acknowledge: (id: number) =>
+		request<{ acknowledged: boolean }>('POST', `/api/dead-letters/${id}/acknowledge`),
+	count: () => request<{ count: number }>('GET', '/api/dead-letters/count')
+};
+
 // API Keys
 export const apiKeys = {
 	list: () => request<{ keys: any[] }>('GET', '/api/keys'),

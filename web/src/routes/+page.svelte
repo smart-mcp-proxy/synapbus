@@ -6,6 +6,7 @@
 	let recentMessages = $state<any[]>([]);
 	let recentConversations = $state<any[]>([]);
 	let agentCount = $state(0);
+	let agentTypeMap = $state<Record<string, string>>({});
 	let loadingData = $state(true);
 	let showCompose = $state(false);
 
@@ -20,6 +21,11 @@
 			recentMessages = msgRes.messages;
 			recentConversations = convRes.conversations;
 			agentCount = agentRes.agents.length;
+			const typeMap: Record<string, string> = {};
+			for (const agent of agentRes.agents) {
+				typeMap[agent.name] = agent.type;
+			}
+			agentTypeMap = typeMap;
 		} catch {
 			// Errors handled by API client
 		} finally {
@@ -131,7 +137,7 @@
 				{/each}
 			</div>
 		{:else}
-			<MessageList messages={recentMessages} showConversationLink={true} />
+			<MessageList messages={recentMessages} showConversationLink={true} agentTypes={agentTypeMap} />
 		{/if}
 	</div>
 

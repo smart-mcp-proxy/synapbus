@@ -48,11 +48,15 @@ func (s *SQLiteChannelStore) CreateChannel(ctx context.Context, ch *Channel) err
 	if ch.IsPrivate {
 		isPrivate = 1
 	}
+	isSystem := 0
+	if ch.IsSystem {
+		isSystem = 1
+	}
 
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (name, description, topic, type, is_private, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-		ch.Name, ch.Description, ch.Topic, ch.Type, isPrivate, ch.CreatedBy,
+		`INSERT INTO channels (name, description, topic, type, is_private, is_system, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		ch.Name, ch.Description, ch.Topic, ch.Type, isPrivate, isSystem, ch.CreatedBy,
 	)
 	if err != nil {
 		if isUniqueConstraintError(err) {
@@ -74,11 +78,11 @@ func (s *SQLiteChannelStore) CreateChannel(ctx context.Context, ch *Channel) err
 // GetChannel returns a channel by ID.
 func (s *SQLiteChannelStore) GetChannel(ctx context.Context, id int64) (*Channel, error) {
 	var ch Channel
-	var isPrivate int
+	var isPrivate, isSystem int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, topic, type, is_private, created_by, created_at, updated_at
+		`SELECT id, name, description, topic, type, is_private, is_system, created_by, created_at, updated_at
 		 FROM channels WHERE id = ?`, id,
-	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrChannelNotFound
@@ -86,17 +90,18 @@ func (s *SQLiteChannelStore) GetChannel(ctx context.Context, id int64) (*Channel
 		return nil, fmt.Errorf("get channel: %w", err)
 	}
 	ch.IsPrivate = isPrivate != 0
+	ch.IsSystem = isSystem != 0
 	return &ch, nil
 }
 
 // GetChannelByName returns a channel by name (case-insensitive).
 func (s *SQLiteChannelStore) GetChannelByName(ctx context.Context, name string) (*Channel, error) {
 	var ch Channel
-	var isPrivate int
+	var isPrivate, isSystem int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, topic, type, is_private, created_by, created_at, updated_at
+		`SELECT id, name, description, topic, type, is_private, is_system, created_by, created_at, updated_at
 		 FROM channels WHERE LOWER(name) = LOWER(?)`, name,
-	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrChannelNotFound
@@ -104,6 +109,7 @@ func (s *SQLiteChannelStore) GetChannelByName(ctx context.Context, name string) 
 		return nil, fmt.Errorf("get channel by name: %w", err)
 	}
 	ch.IsPrivate = isPrivate != 0
+	ch.IsSystem = isSystem != 0
 	return &ch, nil
 }
 
@@ -111,7 +117,7 @@ func (s *SQLiteChannelStore) GetChannelByName(ctx context.Context, name string) 
 // is a member or has a pending invite.
 func (s *SQLiteChannelStore) ListChannels(ctx context.Context, agentName string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT c.id, c.name, c.description, c.topic, c.type, c.is_private, c.created_by, c.created_at, c.updated_at
+		`SELECT DISTINCT c.id, c.name, c.description, c.topic, c.type, c.is_private, c.is_system, c.created_by, c.created_at, c.updated_at
 		 FROM channels c
 		 WHERE c.is_private = 0
 		    OR EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.agent_name = ?)
@@ -127,11 +133,12 @@ func (s *SQLiteChannelStore) ListChannels(ctx context.Context, agentName string)
 	var channels []*Channel
 	for rows.Next() {
 		var ch Channel
-		var isPrivate int
-		if err := rows.Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		var isPrivate, isSystem int
+		if err := rows.Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan channel: %w", err)
 		}
 		ch.IsPrivate = isPrivate != 0
+		ch.IsSystem = isSystem != 0
 		channels = append(channels, &ch)
 	}
 	if channels == nil {

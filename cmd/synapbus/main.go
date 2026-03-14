@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -213,6 +217,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	agentStore := agents.NewSQLiteAgentStore(db.DB)
 	agentService := agents.NewAgentService(agentStore, tracer)
 
+	// Wire dead letter store into agent service for capture on deregistration
+	deadLetterStore := messaging.NewDeadLetterStore(db.DB)
+	agentService.SetDeadLetterStore(deadLetterStore)
+
 	channelStore := channels.NewSQLiteChannelStore(db.DB)
 	channelService := channels.NewService(channelStore, msgService, tracer)
 
@@ -255,7 +263,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	authCfg := auth.DefaultConfig()
 	authCfg.Secret = authSecret
 	authCfg.DevMode = true
-	authCfg.IssuerURL = fmt.Sprintf("http://localhost:%d", port)
+	// Use SYNAPBUS_BASE_URL for remote/LAN deployments; otherwise derive from request Host header
+	if baseURL := os.Getenv("SYNAPBUS_BASE_URL"); baseURL != "" {
+		authCfg.IssuerURL = strings.TrimRight(baseURL, "/")
+	}
+	// Leave IssuerURL empty for localhost — metadata handler falls back to r.Host
 
 	userStore := auth.NewSQLiteUserStore(db.DB, authCfg.BcryptCost)
 	sessionStore := auth.NewSQLiteSessionStore(db.DB)
@@ -263,6 +275,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fositeStore := auth.NewFositeStore(db.DB, authCfg.BcryptCost)
 	oauthProvider := auth.NewOAuthProvider(authCfg, fositeStore)
 	authHandlers := auth.NewHandlers(userStore, sessionStore, clientStore, oauthProvider, authCfg)
+
+	// Wire agent lister into auth handlers for OAuth authorize page
+	authHandlers.SetAgentLister(&agentListerAdapter{agentService: agentService})
+
+	// Register default MCP OAuth client if it doesn't already exist (T016)
+	ensureDefaultMCPClient(ctx, db.DB, authCfg.BcryptCost)
 
 	// Create initial admin user if no users exist
 	userCount, err := userStore.CountUsers(ctx)
@@ -406,13 +424,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Auth endpoints (public)
-	r.Post("/auth/register", authHandlers.HandleRegister)
-	r.Post("/auth/login", authHandlers.HandleLogin)
+	r.Post("/auth/register", withHumanAgent(authHandlers.HandleRegister, userStore, agentService, channelService))
+	r.Post("/auth/login", withHumanAgent(authHandlers.HandleLogin, userStore, agentService, channelService))
+
+	// OAuth metadata (public, per RFC 8414)
+	r.Get("/.well-known/oauth-authorization-server", authHandlers.HandleOAuthMetadata)
 
 	// OAuth endpoints
-	r.Get("/oauth/authorize", authHandlers.HandleAuthorize)
+	r.Get("/oauth/authorize", authHandlers.HandleAuthorizeGet)
+	r.Post("/oauth/authorize", authHandlers.HandleAuthorizePost)
 	r.Post("/oauth/token", authHandlers.HandleToken)
 	r.Post("/oauth/introspect", authHandlers.HandleIntrospect)
+	r.Post("/oauth/register", authHandlers.HandleDynamicRegistration)
 
 	// Protected auth endpoints
 	r.Group(func(r chi.Router) {
@@ -422,9 +445,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		r.Put("/auth/password", authHandlers.HandleChangePassword)
 	})
 
-	// MCP Streamable HTTP endpoint (with optional agent auth + API keys)
+	// MCP Streamable HTTP endpoint (requires agent auth: API key, managed key, or OAuth bearer)
 	r.Group(func(r chi.Router) {
-		r.Use(agents.OptionalAuthMiddlewareWithAPIKeys(agentService, apiKeyService))
+		r.Use(agents.RequiredAuthMiddlewareWithOAuth(agentService, apiKeyService, oauthProvider))
 		r.Mount("/mcp", mcpSrv.Handler())
 	})
 
@@ -441,6 +464,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AgentService:      agentService,
 		ChannelService:    channelService,
 		APIKeyService:     apiKeyService,
+		DeadLetterStore:   deadLetterStore,
 		SSEHub:            sseHub,
 		SessionMiddleware: sessionMiddleware,
 	})
@@ -500,7 +524,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	// Stop admin socket
@@ -532,6 +556,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		slog.Error("MCP server shutdown error", "error", err)
 	}
 
+	// Close SSE connections so HTTP server can drain
+	sseHub.Close()
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("HTTP server shutdown error", "error", err)
 	}
@@ -540,9 +567,131 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// withHumanAgent wraps an auth handler to ensure a human-type agent and
+// my-agents channel exist after successful login/register.
+func withHumanAgent(next http.HandlerFunc, userStore auth.UserStore, agentSvc *agents.AgentService, channelSvc *channels.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Buffer the request body so we can read the username and still pass it to the handler
+		bodyBytes, err := io.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		// Extract username from request
+		var reqBody struct {
+			Username string `json:"username"`
+		}
+		json.Unmarshal(bodyBytes, &reqBody)
+
+		// Wrap response writer to capture status code
+		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		// On successful auth, ensure human agent and my-agents channel exist
+		if rec.statusCode >= 200 && rec.statusCode < 300 && reqBody.Username != "" {
+			go func() {
+				ctx := context.Background()
+				user, err := userStore.GetUserByUsername(ctx, reqBody.Username)
+				if err != nil {
+					return
+				}
+				humanAgent, err := agentSvc.EnsureHumanAgent(ctx, user.Username, user.DisplayName, user.ID)
+				if err != nil || humanAgent == nil {
+					return
+				}
+				if err := channelSvc.EnsureMyAgentsChannel(ctx, user.Username, humanAgent.Name); err != nil {
+					slog.Warn("failed to ensure my-agents channel",
+						"username", user.Username,
+						"error", err,
+					)
+				}
+			}()
+		}
+	}
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.statusCode = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
 // generateRandomPassword creates a cryptographically random password.
 func generateRandomPassword() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// agentListerAdapter adapts agents.AgentService to auth.AgentLister.
+type agentListerAdapter struct {
+	agentService *agents.AgentService
+}
+
+func (a *agentListerAdapter) ListAgentsByOwner(ctx context.Context, ownerID int64) ([]auth.AgentInfo, error) {
+	agentsList, err := a.agentService.ListAgents(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]auth.AgentInfo, 0, len(agentsList))
+	for _, agent := range agentsList {
+		if agent.Status != "active" || agent.Type == "human" {
+			continue
+		}
+		result = append(result, auth.AgentInfo{
+			Name:        agent.Name,
+			DisplayName: agent.DisplayName,
+			Type:        agent.Type,
+		})
+	}
+	return result, nil
+}
+
+// ensureDefaultMCPClient creates the "mcp-default" public OAuth client if it doesn't exist.
+// This client is used by MCP clients connecting via OAuth 2.1.
+func ensureDefaultMCPClient(ctx context.Context, db *sql.DB, bcryptCost int) {
+	const clientID = "mcp-default"
+	const clientName = "MCP Default Client"
+
+	// Check if client already exists
+	var exists int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM oauth_clients WHERE id = ?", clientID).Scan(&exists)
+	if err != nil {
+		slog.Error("check mcp-default client failed", "error", err)
+		return
+	}
+	if exists > 0 {
+		slog.Debug("mcp-default OAuth client already exists")
+		return
+	}
+
+	// Create public client (empty secret hash = public)
+	redirectURIs, _ := json.Marshal([]string{"http://localhost:*"})
+	grantTypes, _ := json.Marshal([]string{"authorization_code", "refresh_token"})
+	scopes, _ := json.Marshal([]string{"mcp"})
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO oauth_clients (id, secret_hash, name, redirect_uris, grant_types, scopes, owner_id, created_at)
+		 VALUES (?, '', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)`,
+		clientID, clientName, string(redirectURIs), string(grantTypes), string(scopes),
+	)
+	if err != nil {
+		slog.Error("create mcp-default OAuth client failed", "error", err)
+		return
+	}
+
+	slog.Info("created default MCP OAuth client",
+		"client_id", clientID,
+		"public", true,
+		"redirect_uris", "http://localhost:*",
+		"scopes", "mcp",
+	)
 }

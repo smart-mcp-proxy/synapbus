@@ -42,6 +42,21 @@ type Conversation struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+// DeadLetter represents an undeliverable message captured when an agent is deleted.
+type DeadLetter struct {
+	ID                int64           `json:"id"`
+	OwnerID           int64           `json:"owner_id"`
+	OriginalMessageID int64           `json:"original_message_id"`
+	ToAgent           string          `json:"to_agent"`
+	FromAgent         string          `json:"from_agent"`
+	Body              string          `json:"body"`
+	Subject           string          `json:"subject"`
+	Priority          int             `json:"priority"`
+	Metadata          json.RawMessage `json:"metadata,omitempty"`
+	Acknowledged      bool            `json:"acknowledged"`
+	CreatedAt         time.Time       `json:"created_at"`
+}
+
 // InboxState tracks per-agent, per-conversation read position.
 type InboxState struct {
 	AgentName         string    `json:"agent_name"`

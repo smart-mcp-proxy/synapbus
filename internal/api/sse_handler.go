@@ -65,6 +65,20 @@ func (h *SSEHub) BroadcastAll(event SSEEvent) {
 	}
 }
 
+// Close disconnects all SSE clients so in-flight HTTP connections can drain.
+func (h *SSEHub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for ownerID, clientSet := range h.clients {
+		for ch := range clientSet {
+			close(ch)
+		}
+		delete(h.clients, ownerID)
+	}
+	h.logger.Info("all SSE clients disconnected")
+}
+
 func (h *SSEHub) addClient(ownerID int64) chan SSEEvent {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -84,12 +98,14 @@ func (h *SSEHub) removeClient(ownerID int64, ch chan SSEEvent) {
 	defer h.mu.Unlock()
 
 	if clientSet, ok := h.clients[ownerID]; ok {
-		delete(clientSet, ch)
+		if _, exists := clientSet[ch]; exists {
+			delete(clientSet, ch)
+			close(ch)
+		}
 		if len(clientSet) == 0 {
 			delete(h.clients, ownerID)
 		}
 	}
-	close(ch)
 
 	h.logger.Info("SSE client disconnected", "owner_id", ownerID)
 }

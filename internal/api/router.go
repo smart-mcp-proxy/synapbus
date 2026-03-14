@@ -23,6 +23,7 @@ type RouterConfig struct {
 	AgentService      *agents.AgentService
 	ChannelService    *channels.Service
 	APIKeyService     *apikeys.Service
+	DeadLetterStore   *messaging.DeadLetterStore
 	SSEHub            *SSEHub
 	SessionMiddleware func(http.Handler) http.Handler
 }
@@ -77,7 +78,7 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 	// Web UI API routes (messages, agents, channels, SSE)
 	if cfg.MsgService != nil && cfg.AgentService != nil {
 		messagesHandler := NewMessagesHandler(cfg.MsgService, cfg.AgentService)
-		agentsHandler := NewAgentsHandler(cfg.AgentService, cfg.TraceStore)
+		agentsHandler := NewAgentsHandler(cfg.AgentService, cfg.TraceStore, cfg.ChannelService)
 
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware)
@@ -137,6 +138,18 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 			r.Group(func(r chi.Router) {
 				r.Use(authMiddleware)
 				r.Get("/api/events", cfg.SSEHub.HandleEvents)
+			})
+		}
+
+		// Dead Letters
+		if cfg.DeadLetterStore != nil {
+			deadLettersHandler := NewDeadLettersHandler(cfg.DeadLetterStore)
+			r.Group(func(r chi.Router) {
+				r.Use(authMiddleware)
+
+				r.Get("/api/dead-letters", deadLettersHandler.List)
+				r.Get("/api/dead-letters/count", deadLettersHandler.Count)
+				r.Post("/api/dead-letters/{id}/acknowledge", deadLettersHandler.Acknowledge)
 			})
 		}
 	}

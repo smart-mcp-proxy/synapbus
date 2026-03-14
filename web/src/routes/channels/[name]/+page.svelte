@@ -17,7 +17,6 @@
 	let body = $state('');
 	let sending = $state(false);
 	let sendError = $state('');
-	let selectedAgent = $state<any>(null);
 
 	let channelName = $derived($page.params.name);
 
@@ -33,9 +32,6 @@
 			channel = chRes.channel;
 			members = chRes.members;
 			agentList = agRes.agents ?? [];
-			if (agentList.length > 0 && !selectedAgent) {
-				selectedAgent = agentList[0];
-			}
 			await loadMessages();
 		} catch {
 			// handled
@@ -102,12 +98,11 @@
 	}
 
 	async function handleSend() {
-		if (!body.trim() || !selectedAgent) return;
+		if (!body.trim()) return;
 		sending = true;
 		sendError = '';
 		try {
 			await messagesApi.send({
-				from: selectedAgent.name,
 				body: body.trim(),
 				channel_id: channel.id
 			});
@@ -125,6 +120,11 @@
 			e.preventDefault();
 			handleSend();
 		}
+	}
+
+	function agentType(name: string): string | null {
+		const agent = agentList.find(a => a.name === name);
+		return agent?.type ?? null;
 	}
 
 	function agentColor(name: string): string {
@@ -221,13 +221,18 @@
 										<div class="min-w-0 flex-1">
 											<div class="flex items-center gap-2 mb-0.5">
 												<span class="font-semibold text-sm text-text-primary">{msg.from_agent}</span>
+												{#if agentType(msg.from_agent) === 'ai'}
+													<span class="text-[9px] font-mono text-accent-purple bg-accent-purple/10 px-1 rounded">AI</span>
+												{:else if agentType(msg.from_agent) === 'human'}
+													<span class="text-[9px] font-mono text-accent-blue bg-accent-blue/10 px-1 rounded">Human</span>
+												{/if}
 												<span class="text-xs text-text-secondary">{formatTime(msg.created_at)}</span>
 											</div>
 											<p class="text-sm text-text-primary/90 leading-relaxed whitespace-pre-wrap">{msg.body}</p>
 											{#if msg.reply_count > 0}
 												<button
 													class="mt-1 flex items-center gap-1 text-xs text-accent-blue hover:underline"
-													onclick={() => openThread(msg.id, msg.conversation_id)}
+													onclick={() => openThread(msg.id, msg.conversation_id, msg.from_agent)}
 												>
 													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 														<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
@@ -240,7 +245,7 @@
 										<button
 											class="absolute top-1.5 right-3 p-1 rounded hover:bg-bg-tertiary text-text-secondary hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
 											title="Reply in thread"
-											onclick={() => openThread(msg.id, msg.conversation_id)}
+											onclick={() => openThread(msg.id, msg.conversation_id, msg.from_agent)}
 										>
 											<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 												<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
@@ -281,24 +286,6 @@
 										<path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
 									</svg>
 								</button>
-							</div>
-							<div class="flex items-center gap-2 mt-1 px-1">
-								<p class="text-[10px] text-text-secondary">Sending as <span class="font-mono">{selectedAgent?.display_name || selectedAgent?.name}</span></p>
-								{#if agentList.length > 1}
-									<select
-										class="text-[10px] bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-secondary outline-none"
-										onchange={(e) => {
-											const target = e.target as HTMLSelectElement;
-											selectedAgent = agentList.find(a => a.name === target.value) ?? agentList[0];
-										}}
-									>
-										{#each agentList as agent}
-											<option value={agent.name} selected={agent.name === selectedAgent?.name}>
-												{agent.display_name || agent.name}
-											</option>
-										{/each}
-									</select>
-								{/if}
 							</div>
 						{/if}
 					</div>

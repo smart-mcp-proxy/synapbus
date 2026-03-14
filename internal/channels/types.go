@@ -31,6 +31,7 @@ type Channel struct {
 	Topic       string    `json:"topic"`
 	Type        string    `json:"type"`
 	IsPrivate   bool      `json:"is_private"`
+	IsSystem    bool      `json:"is_system"`
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -68,6 +69,7 @@ type CreateChannelRequest struct {
 	Topic       string `json:"topic"`
 	Type        string `json:"type"`
 	IsPrivate   bool   `json:"is_private"`
+	IsSystem    bool   `json:"is_system"`
 	CreatedBy   string `json:"created_by"`
 }
 

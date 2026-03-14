@@ -65,52 +65,6 @@ func makeRequest(args map[string]any) mcplib.CallToolRequest {
 	}
 }
 
-func TestToolHandler_RegisterAgent(t *testing.T) {
-	tr, _, _, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	t.Run("successful registration", func(t *testing.T) {
-		req := makeRequest(map[string]any{
-			"name":         "test-agent",
-			"display_name": "Test Agent",
-			"type":         "ai",
-		})
-
-		result, err := tr.handleRegisterAgent(ctx, req)
-		if err != nil {
-			t.Fatalf("handleRegisterAgent: %v", err)
-		}
-		if result.IsError {
-			t.Fatalf("unexpected error: %v", result.Content)
-		}
-
-		// Parse response
-		var resp map[string]any
-		text := result.Content[0].(mcplib.TextContent).Text
-		if err := json.Unmarshal([]byte(text), &resp); err != nil {
-			t.Fatalf("unmarshal response: %v", err)
-		}
-		if resp["api_key"] == nil || resp["api_key"] == "" {
-			t.Error("expected api_key in response")
-		}
-		if resp["name"] != "test-agent" {
-			t.Errorf("name = %v, want test-agent", resp["name"])
-		}
-	})
-
-	t.Run("missing name", func(t *testing.T) {
-		req := makeRequest(map[string]any{})
-
-		result, err := tr.handleRegisterAgent(ctx, req)
-		if err != nil {
-			t.Fatalf("handleRegisterAgent: %v", err)
-		}
-		if !result.IsError {
-			t.Error("expected error for missing name")
-		}
-	})
-}
-
 func TestToolHandler_SendMessage(t *testing.T) {
 	tr, _, agentSvc, _ := newTestRegistrar(t)
 	ctx := context.Background()
@@ -336,54 +290,6 @@ func TestToolHandler_DiscoverAgents(t *testing.T) {
 	count := resp["count"].(float64)
 	if count != 1 {
 		t.Errorf("count = %v, want 1", count)
-	}
-}
-
-func TestToolHandler_UpdateAgent(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "update-me", "Update Me", "ai", nil, 1)
-
-	authCtx := ContextWithAgentName(ctx, "update-me")
-
-	req := makeRequest(map[string]any{
-		"display_name": "Updated Name",
-		"capabilities": `{"skills":["new-skill"]}`,
-	})
-
-	result, err := tr.handleUpdateAgent(authCtx, req)
-	if err != nil {
-		t.Fatalf("handleUpdateAgent: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-
-	var resp map[string]any
-	text := result.Content[0].(mcplib.TextContent).Text
-	json.Unmarshal([]byte(text), &resp)
-	if resp["display_name"] != "Updated Name" {
-		t.Errorf("display_name = %v, want Updated Name", resp["display_name"])
-	}
-}
-
-func TestToolHandler_DeregisterAgent(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "bye-bot", "Bye Bot", "ai", nil, 1)
-
-	authCtx := ContextWithAgentName(ctx, "bye-bot")
-
-	req := makeRequest(map[string]any{})
-
-	result, err := tr.handleDeregisterAgent(authCtx, req)
-	if err != nil {
-		t.Fatalf("handleDeregisterAgent: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
 	}
 }
 

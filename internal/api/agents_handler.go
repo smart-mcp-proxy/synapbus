@@ -8,23 +8,30 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/synapbus/synapbus/internal/agents"
+	"github.com/synapbus/synapbus/internal/auth"
+	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/trace"
 )
 
 // AgentsHandler handles REST API requests for agents.
 type AgentsHandler struct {
-	agentService *agents.AgentService
-	traceStore   trace.TraceStore
-	logger       *slog.Logger
+	agentService   *agents.AgentService
+	channelService *channels.Service
+	traceStore     trace.TraceStore
+	logger         *slog.Logger
 }
 
 // NewAgentsHandler creates a new agents handler.
-func NewAgentsHandler(agentService *agents.AgentService, traceStore trace.TraceStore) *AgentsHandler {
-	return &AgentsHandler{
+func NewAgentsHandler(agentService *agents.AgentService, traceStore trace.TraceStore, channelService ...*channels.Service) *AgentsHandler {
+	h := &AgentsHandler{
 		agentService: agentService,
 		traceStore:   traceStore,
 		logger:       slog.Default().With("component", "api.agents"),
 	}
+	if len(channelService) > 0 {
+		h.channelService = channelService[0]
+	}
+	return h
 }
 
 // ListAgents handles GET /api/agents.
@@ -115,6 +122,19 @@ func (h *AgentsHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("register agent failed", "error", err)
 		writeJSON(w, http.StatusBadRequest, errorBody("register_failed", err.Error()))
 		return
+	}
+
+	// Auto-join agent to the owner's my-agents channel
+	if h.channelService != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok {
+			if err := h.channelService.JoinMyAgentsChannel(r.Context(), user.Username, agent.Name); err != nil {
+				h.logger.Warn("failed to join agent to my-agents channel",
+					"agent", agent.Name,
+					"username", user.Username,
+					"error", err,
+				)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{

@@ -2,10 +2,11 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { user, logout } from '$lib/stores/auth';
-	import { channels as channelsApi, agents as agentsApi } from '$lib/api/client';
+	import { channels as channelsApi, agents as agentsApi, deadLetters as deadLettersApi } from '$lib/api/client';
 
 	let channelList = $state<any[]>([]);
 	let agentList = $state<any[]>([]);
+	let deadLetterCount = $state(0);
 
 	let channelsExpanded = $state(true);
 	let dmsExpanded = $state(true);
@@ -21,12 +22,14 @@
 
 	async function loadSidebarData() {
 		try {
-			const [chRes, agRes] = await Promise.all([
+			const [chRes, agRes, dlRes] = await Promise.all([
 				channelsApi.list(),
-				agentsApi.list()
+				agentsApi.list(),
+				deadLettersApi.count().catch(() => ({ count: 0 }))
 			]);
 			channelList = chRes.channels ?? [];
 			agentList = agRes.agents ?? [];
+			deadLetterCount = dlRes.count ?? 0;
 		} catch {
 			// handled
 		}
@@ -153,9 +156,16 @@
 								href="/channels/{ch.name}"
 								class="sidebar-item {isActive('/channels/' + ch.name) ? 'sidebar-item-active' : ''}"
 							>
-								<span class="text-text-secondary font-mono text-xs">#</span>
-								<span class="truncate">{ch.name}</span>
-								{#if ch.is_private}
+								{#if ch.name.startsWith('my-agents-')}
+									<svg class="w-4 h-4 flex-shrink-0 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+									</svg>
+									<span class="truncate">My Agents</span>
+								{:else}
+									<span class="text-text-secondary font-mono text-xs">#</span>
+									<span class="truncate">{ch.name}</span>
+								{/if}
+								{#if ch.is_private && !ch.name.startsWith('my-agents-')}
 									<svg class="w-3 h-3 text-text-secondary ml-auto flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 										<path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
 									</svg>
@@ -243,6 +253,18 @@
 							{link.label}
 						</a>
 					{/each}
+				<a
+					href="/dead-letters"
+					class="sidebar-item {isActive('/dead-letters') ? 'sidebar-item-active' : ''}"
+				>
+					<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M21.75 9v.906a2.25 2.25 0 01-1.183 1.981l-6.478 3.488M2.25 9v.906a2.25 2.25 0 001.183 1.981l6.478 3.488m8.839 2.51l-4.66-2.51m0 0l-1.023-.55a2.25 2.25 0 00-2.134 0l-1.022.55m0 0l-4.661 2.51m16.5 1.615a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V8.844a2.25 2.25 0 011.183-1.98l7.5-4.04a2.25 2.25 0 012.134 0l7.5 4.04a2.25 2.25 0 011.183 1.98V19.5z" />
+					</svg>
+					Dead Letters
+					{#if deadLetterCount > 0}
+						<span class="ml-auto text-[10px] font-bold text-white bg-accent-red px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0">{deadLetterCount}</span>
+					{/if}
+				</a>
 				</div>
 			{/if}
 		</div>

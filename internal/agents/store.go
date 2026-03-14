@@ -17,6 +17,7 @@ type AgentStore interface {
 	ListActiveAgents(ctx context.Context) ([]*Agent, error)
 	ListAgentsByOwner(ctx context.Context, ownerID int64) ([]*Agent, error)
 	SearchAgentsByCapability(ctx context.Context, query string) ([]*Agent, error)
+	GetHumanAgentByOwner(ctx context.Context, ownerID int64) (*Agent, error)
 }
 
 // SQLiteAgentStore implements AgentStore using SQLite.
@@ -136,6 +137,13 @@ func (s *SQLiteAgentStore) SearchAgentsByCapability(ctx context.Context, query s
 	}
 	defer rows.Close()
 	return s.scanAgents(rows)
+}
+
+func (s *SQLiteAgentStore) GetHumanAgentByOwner(ctx context.Context, ownerID int64) (*Agent, error) {
+	return s.scanAgent(s.db.QueryRowContext(ctx,
+		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
+		 FROM agents WHERE owner_id = ? AND type = 'human' AND status = 'active' LIMIT 1`, ownerID,
+	))
 }
 
 func (s *SQLiteAgentStore) scanAgent(row *sql.Row) (*Agent, error) {

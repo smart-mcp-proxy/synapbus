@@ -75,6 +75,18 @@ func (w *responseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Flush implements http.Flusher so SSE streaming works through the logging middleware.
+func (w *responseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying ResponseWriter for http.ResponseController.
+func (w *responseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // OwnerAuthMiddleware is a simple middleware that extracts owner_id from an authenticated session.
 // In the full system this would validate session tokens. For now it extracts from
 // a header or query param for testing purposes. In production, this integrates with

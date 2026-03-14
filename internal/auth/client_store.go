@@ -16,6 +16,7 @@ import (
 // ClientStore defines the storage interface for OAuth client operations.
 type ClientStore interface {
 	CreateClient(ctx context.Context, name string, redirectURIs, grantTypes, scopes []string, ownerID int64) (*OAuthClient, string, error)
+	CreatePublicClient(ctx context.Context, name string, redirectURIs, grantTypes, scopes []string) (*OAuthClient, error)
 	GetClient(ctx context.Context, clientID string) (*OAuthClient, error)
 	ListClientsByOwner(ctx context.Context, ownerID int64) ([]*OAuthClient, error)
 	VerifyClientSecret(ctx context.Context, clientID, secret string) (*OAuthClient, error)
@@ -88,6 +89,46 @@ func (s *SQLiteClientStore) CreateClient(ctx context.Context, name string, redir
 	}
 
 	return client, secret, nil
+}
+
+// CreatePublicClient registers a public OAuth client (no secret) for dynamic registration (RFC 7591).
+func (s *SQLiteClientStore) CreatePublicClient(ctx context.Context, name string, redirectURIs, grantTypes, scopes []string) (*OAuthClient, error) {
+	clientID, err := generateClientID()
+	if err != nil {
+		return nil, fmt.Errorf("generate client_id: %w", err)
+	}
+
+	if redirectURIs == nil {
+		redirectURIs = []string{}
+	}
+	if grantTypes == nil {
+		grantTypes = []string{"authorization_code", "refresh_token"}
+	}
+	if scopes == nil {
+		scopes = []string{"mcp"}
+	}
+
+	redirectURIsJSON, _ := json.Marshal(redirectURIs)
+	grantTypesJSON, _ := json.Marshal(grantTypes)
+	scopesJSON, _ := json.Marshal(scopes)
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO oauth_clients (id, secret_hash, name, redirect_uris, grant_types, scopes, owner_id, created_at)
+		 VALUES (?, '', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)`,
+		clientID, name, string(redirectURIsJSON), string(grantTypesJSON), string(scopesJSON),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert client: %w", err)
+	}
+
+	return &OAuthClient{
+		ID:           clientID,
+		Name:         name,
+		RedirectURIs: redirectURIs,
+		GrantTypes:   grantTypes,
+		Scopes:       scopes,
+		CreatedAt:    time.Now(),
+	}, nil
 }
 
 // GetClient retrieves an OAuth client by its ID.

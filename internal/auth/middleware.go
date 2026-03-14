@@ -87,6 +87,8 @@ func RequireSession(userStore UserStore, sessionStore SessionStore) func(http.Ha
 
 // RequireBearer creates middleware that validates an OAuth access token.
 // If valid, it injects the user/client identity into the context.
+// When the token session includes an agent_name, it is stored in the context
+// so that MCP tool handlers can resolve the authenticated agent.
 func RequireBearer(provider fosite.OAuth2Provider, userStore UserStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,17 +119,37 @@ func RequireBearer(provider fosite.OAuth2Provider, userStore UserStore) func(htt
 			ctx := r.Context()
 			ctx = ContextWithClient(ctx, ar.GetClient().GetID())
 
-			// If the token has a user session, load the user
-			if sess, ok := ar.GetSession().(*fositeSession); ok && sess.UserID > 0 {
-				user, err := userStore.GetUserByID(ctx, sess.UserID)
-				if err == nil {
-					ctx = ContextWithUser(ctx, user)
+			// If the token has a user session, load the user and extract agent_name
+			if sess, ok := ar.GetSession().(*fositeSession); ok {
+				if sess.UserID > 0 {
+					user, err := userStore.GetUserByID(ctx, sess.UserID)
+					if err == nil {
+						ctx = ContextWithUser(ctx, user)
+					}
+				}
+				// Store agent_name from OAuth session for MCP identity resolution
+				if sess.AgentName != "" {
+					ctx = ContextWithOAuthAgentName(ctx, sess.AgentName)
 				}
 			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// oauthAgentNameContextKey is the context key for the agent name from OAuth tokens.
+const oauthAgentNameContextKey contextKey = "oauth_agent_name"
+
+// ContextWithOAuthAgentName stores the agent name from an OAuth token session.
+func ContextWithOAuthAgentName(ctx context.Context, agentName string) context.Context {
+	return context.WithValue(ctx, oauthAgentNameContextKey, agentName)
+}
+
+// OAuthAgentNameFromContext extracts the agent name stored by the Bearer middleware.
+func OAuthAgentNameFromContext(ctx context.Context) (string, bool) {
+	name, ok := ctx.Value(oauthAgentNameContextKey).(string)
+	return name, ok
 }
 
 // RequireAuth creates middleware that accepts either a session cookie or bearer token.
