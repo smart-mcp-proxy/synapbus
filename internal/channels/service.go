@@ -386,7 +386,9 @@ func (s *Service) UpdateChannel(ctx context.Context, channelID int64, req Update
 	return ch, nil
 }
 
-// BroadcastMessage sends a message to all channel members except the sender.
+// BroadcastMessage sends a message to a channel. It creates a single channel
+// message (visible in the channel timeline via GetChannelMessages) and also
+// delivers individual DM notifications to each member's inbox.
 func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAgent, body string, priority int, metadata string) ([]*messaging.Message, error) {
 	ch, err := s.store.GetChannel(ctx, channelID)
 	if err != nil {
@@ -402,62 +404,71 @@ func (s *Service) BroadcastMessage(ctx context.Context, channelID int64, fromAge
 		return nil, ErrNotChannelMember
 	}
 
-	// Get all members
+	// 1. Create the canonical channel message (no "to" — this is a channel post).
+	//    This matches how the Web UI sends channel messages and is what
+	//    GetChannelMessages queries for.
+	channelMeta := fmt.Sprintf(`{"channel_name":%q}`, ch.Name)
+	if metadata != "" {
+		channelMeta = fmt.Sprintf(`{"channel_name":%q,"user_metadata":%s}`, ch.Name, metadata)
+	}
+
+	channelMsg, err := s.msgService.SendMessage(ctx, fromAgent, "", body, messaging.SendOptions{
+		Subject:   fmt.Sprintf("channel:%s", ch.Name),
+		Priority:  priority,
+		Metadata:  channelMeta,
+		ChannelID: &channelID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create channel message: %w", err)
+	}
+
+	// 2. Deliver inbox notifications to other members so they see it in read_inbox.
 	members, err := s.store.GetMembers(ctx, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("get members: %w", err)
 	}
 
-	var messages []*messaging.Message
+	recipientCount := 0
 	for _, m := range members {
 		if m.AgentName == fromAgent {
-			continue // skip sender
+			continue
 		}
 
-		// Build metadata with channel info
-		channelMeta := fmt.Sprintf(`{"channel_id":%d,"channel_name":%q}`, channelID, ch.Name)
-		if metadata != "" {
-			// Merge user metadata with channel metadata
-			channelMeta = fmt.Sprintf(`{"channel_id":%d,"channel_name":%q,"user_metadata":%s}`, channelID, ch.Name, metadata)
-		}
-
-		opts := messaging.SendOptions{
+		inboxMeta := fmt.Sprintf(`{"channel_id":%d,"channel_name":%q,"channel_message_id":%d}`, channelID, ch.Name, channelMsg.ID)
+		_, err := s.msgService.SendMessage(ctx, fromAgent, m.AgentName, body, messaging.SendOptions{
 			Subject:  fmt.Sprintf("channel:%s", ch.Name),
 			Priority: priority,
-			Metadata: channelMeta,
-		}
-
-		msg, err := s.msgService.SendMessage(ctx, fromAgent, m.AgentName, body, opts)
+			Metadata: inboxMeta,
+		})
 		if err != nil {
-			s.logger.Error("failed to send channel message",
+			s.logger.Error("failed to send channel notification",
 				"channel_id", channelID,
 				"from", fromAgent,
 				"to", m.AgentName,
 				"error", err,
 			)
-			continue // best effort — don't fail the whole broadcast
+			continue
 		}
-		messages = append(messages, msg)
+		recipientCount++
 	}
 
 	s.logger.Info("channel message broadcast",
 		"channel_id", channelID,
 		"from", fromAgent,
-		"recipients", len(messages),
+		"message_id", channelMsg.ID,
+		"recipients", recipientCount,
 	)
 
 	if s.tracer != nil {
 		s.tracer.Record(ctx, fromAgent, "channel.broadcast", map[string]any{
 			"channel_id":   channelID,
 			"channel_name": ch.Name,
-			"recipients":   len(messages),
+			"message_id":   channelMsg.ID,
+			"recipients":   recipientCount,
 		})
 	}
 
-	if messages == nil {
-		messages = []*messaging.Message{}
-	}
-	return messages, nil
+	return []*messaging.Message{channelMsg}, nil
 }
 
 // GetMembers returns all members of a channel.

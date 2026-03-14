@@ -305,15 +305,15 @@ func (ctr *ChannelToolRegistrar) handleSendChannelMessage(ctx context.Context, r
 		return mcp.NewToolResultError(fmt.Sprintf("send_channel_message failed: %s", err)), nil
 	}
 
-	msgIDs := make([]int64, len(messages))
-	for i, m := range messages {
-		msgIDs[i] = m.ID
+	var messageID int64
+	if len(messages) > 0 {
+		messageID = messages[0].ID
 	}
 
 	return resultJSON(map[string]any{
-		"channel_id":      channelID,
-		"recipients":      len(messages),
-		"message_ids":     msgIDs,
+		"channel_id": channelID,
+		"message_id": messageID,
+		"status":     "sent",
 	})
 }
 

@@ -238,13 +238,14 @@ func (h *MessagesHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		From      string `json:"from"`
-		To        string `json:"to"`
-		Body      string `json:"body"`
-		Priority  int    `json:"priority"`
-		ChannelID *int64 `json:"channel_id,omitempty"`
-		Subject   string `json:"subject,omitempty"`
-		ReplyTo   *int64 `json:"reply_to,omitempty"`
+		From           string `json:"from"`
+		To             string `json:"to"`
+		Body           string `json:"body"`
+		Priority       int    `json:"priority"`
+		ChannelID      *int64 `json:"channel_id,omitempty"`
+		ConversationID *int64 `json:"conversation_id,omitempty"`
+		Subject        string `json:"subject,omitempty"`
+		ReplyTo        *int64 `json:"reply_to,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -294,10 +295,11 @@ func (h *MessagesHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := messaging.SendOptions{
-		Priority:  req.Priority,
-		ChannelID: req.ChannelID,
-		Subject:   req.Subject,
-		ReplyTo:   req.ReplyTo,
+		Priority:       req.Priority,
+		ChannelID:      req.ChannelID,
+		ConversationID: req.ConversationID,
+		Subject:        req.Subject,
+		ReplyTo:        req.ReplyTo,
 	}
 
 	msg, err := h.msgService.SendMessage(r.Context(), req.From, req.To, req.Body, opts)

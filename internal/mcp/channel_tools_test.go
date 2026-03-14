@@ -337,9 +337,11 @@ func TestChannelToolHandler_SendChannelMessage(t *testing.T) {
 		}
 
 		resp := parseResponse(t, result)
-		recipients := resp["recipients"].(float64)
-		if recipients != 1 {
-			t.Errorf("recipients = %v, want 1", recipients)
+		if resp["status"] != "sent" {
+			t.Errorf("status = %v, want sent", resp["status"])
+		}
+		if resp["message_id"].(float64) == 0 {
+			t.Error("message_id should be non-zero")
 		}
 	})
 

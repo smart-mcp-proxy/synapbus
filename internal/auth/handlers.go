@@ -890,6 +890,20 @@ const authorizeTemplateHTML = `<!DOCTYPE html>
 
 // HandleToken handles POST /oauth/token.
 func (h *Handlers) HandleToken(w http.ResponseWriter, r *http.Request) {
+	// Normalize localhost redirect_uri to 127.0.0.1 to match what was stored during authorization (RFC 8252)
+	if err := r.ParseForm(); err == nil {
+		if redirectURI := r.Form.Get("redirect_uri"); redirectURI != "" {
+			if parsed, err := url.Parse(redirectURI); err == nil && parsed.Hostname() == "localhost" {
+				parsed.Host = "127.0.0.1:" + parsed.Port()
+				if parsed.Port() == "" {
+					parsed.Host = "127.0.0.1"
+				}
+				r.Form.Set("redirect_uri", parsed.String())
+				r.PostForm.Set("redirect_uri", parsed.String())
+			}
+		}
+	}
+
 	ctx := r.Context()
 	sess := &fositeSession{}
 

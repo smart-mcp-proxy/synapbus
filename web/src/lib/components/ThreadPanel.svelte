@@ -60,6 +60,7 @@
 				to: recipient,
 				body: replyBody.trim(),
 				reply_to: currentThread.messageId,
+				conversation_id: currentThread.conversationId,
 				subject: conversation?.subject
 			});
 			replyBody = '';

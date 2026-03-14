@@ -71,6 +71,16 @@ func (s *fositeSession) GetSubject() string {
 	return s.Subject
 }
 
+// GetAgentName returns the agent name from the OAuth session.
+func (s *fositeSession) GetAgentName() string {
+	return s.AgentName
+}
+
+// GetUserID returns the user ID from the OAuth session.
+func (s *fositeSession) GetUserID() int64 {
+	return s.UserID
+}
+
 // Clone implements fosite.Session.
 func (s *fositeSession) Clone() fosite.Session {
 	expiresAtMap := make(map[fosite.TokenType]time.Time)

@@ -531,46 +531,67 @@ func TestService_BroadcastMessage(t *testing.T) {
 
 	ch, _ := svc.CreateChannel(ctx, CreateChannelRequest{Name: "alerts", Type: TypeStandard, CreatedBy: "agent-a"})
 
-	t.Run("broadcast to zero other members", func(t *testing.T) {
+	t.Run("broadcast creates channel message", func(t *testing.T) {
 		msgs, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "hello", 5, "")
 		if err != nil {
 			t.Fatalf("BroadcastMessage: %v", err)
 		}
-		if len(msgs) != 0 {
-			t.Errorf("got %d messages, want 0 (no other members)", len(msgs))
-		}
-	})
-
-	t.Run("broadcast to one member", func(t *testing.T) {
-		svc.JoinChannel(ctx, ch.ID, "agent-b")
-		msgs, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "hello everyone", 5, "")
-		if err != nil {
-			t.Fatalf("BroadcastMessage: %v", err)
-		}
 		if len(msgs) != 1 {
-			t.Errorf("got %d messages, want 1", len(msgs))
+			t.Errorf("got %d messages, want 1 (channel message)", len(msgs))
 		}
-		if msgs[0].ToAgent != "agent-b" {
-			t.Errorf("to_agent = %s, want agent-b", msgs[0].ToAgent)
+		if msgs[0].ToAgent != "" {
+			t.Errorf("channel message to_agent = %q, want empty", msgs[0].ToAgent)
+		}
+		if msgs[0].ChannelID == nil || *msgs[0].ChannelID != ch.ID {
+			t.Errorf("channel_id = %v, want %d", msgs[0].ChannelID, ch.ID)
 		}
 	})
 
-	t.Run("broadcast to multiple members", func(t *testing.T) {
+	t.Run("broadcast visible via GetChannelMessages", func(t *testing.T) {
+		channelMsgs, err := svc.msgService.GetChannelMessages(ctx, ch.ID, 100)
+		if err != nil {
+			t.Fatalf("GetChannelMessages: %v", err)
+		}
+		found := false
+		for _, m := range channelMsgs {
+			if m.Body == "hello" && m.FromAgent == "agent-a" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("broadcast message not found via GetChannelMessages")
+		}
+	})
+
+	t.Run("broadcast delivers inbox notifications", func(t *testing.T) {
+		svc.JoinChannel(ctx, ch.ID, "agent-b")
 		svc.JoinChannel(ctx, ch.ID, "agent-c")
-		msgs, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "broadcast test", 5, "")
+		_, err := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "multi-member test", 5, "")
 		if err != nil {
 			t.Fatalf("BroadcastMessage: %v", err)
 		}
-		if len(msgs) != 2 {
-			t.Errorf("got %d messages, want 2", len(msgs))
+
+		// agent-b should have an inbox notification
+		inbox, _ := svc.msgService.ReadInbox(ctx, "agent-b", messaging.ReadOptions{IncludeRead: true})
+		found := false
+		for _, m := range inbox {
+			if m.Body == "multi-member test" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("agent-b did not receive inbox notification")
 		}
 	})
 
 	t.Run("sender does not receive own message", func(t *testing.T) {
-		msgs, _ := svc.BroadcastMessage(ctx, ch.ID, "agent-a", "no self-message", 5, "")
-		for _, m := range msgs {
-			if m.ToAgent == "agent-a" {
-				t.Error("sender should not receive their own broadcast message")
+		svc.BroadcastMessage(ctx, ch.ID, "agent-a", "no self-message", 5, "")
+		inbox, _ := svc.msgService.ReadInbox(ctx, "agent-a", messaging.ReadOptions{IncludeRead: true})
+		for _, m := range inbox {
+			if m.Body == "no self-message" {
+				t.Error("sender should not receive their own broadcast in inbox")
 			}
 		}
 	})
@@ -584,29 +605,6 @@ func TestService_BroadcastMessage(t *testing.T) {
 		}
 	})
 
-	t.Run("broadcast delivers to inbox", func(t *testing.T) {
-		svc.BroadcastMessage(ctx, ch.ID, "agent-a", "inbox test", 5, "")
-
-		// Read agent-b's inbox
-		msgs, err := svc.msgService.ReadInbox(ctx, "agent-b", messaging.ReadOptions{IncludeRead: true})
-		if err != nil {
-			t.Fatalf("ReadInbox: %v", err)
-		}
-		found := false
-		for _, m := range msgs {
-			if m.Body == "inbox test" && m.FromAgent == "agent-a" {
-				found = true
-				// Channel info is in metadata
-				if string(m.Metadata) == "{}" {
-					t.Error("message metadata should contain channel info")
-				}
-				break
-			}
-		}
-		if !found {
-			t.Error("agent-b should have received the broadcast message in inbox")
-		}
-	})
 }
 
 // --- Trace recording tests ---
