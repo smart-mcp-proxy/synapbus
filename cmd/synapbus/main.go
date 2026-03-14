@@ -212,6 +212,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 	channelStore := channels.NewSQLiteChannelStore(db.DB)
 	channelService := channels.NewService(channelStore, msgService, tracer)
 
+	// Ensure #general channel exists
+	_, err = channelService.CreateChannel(ctx, channels.CreateChannelRequest{
+		Name:        "general",
+		Description: "General discussion",
+		Type:        "standard",
+		CreatedBy:   "system",
+	})
+	if err != nil {
+		// Ignore "already exists" errors
+		if !strings.Contains(err.Error(), "UNIQUE") && !strings.Contains(err.Error(), "already exists") {
+			slog.Warn("failed to create #general channel", "error", err)
+		}
+	} else {
+		slog.Info("created default #general channel")
+	}
+
 	// Create swarm service (task auction + stigmergy)
 	taskStore := channels.NewSQLiteTaskStore(db.DB)
 	swarmService := channels.NewSwarmService(taskStore, channelStore, tracer)
@@ -271,6 +287,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 	var searchService *search.Service
 	var embPipeline *search.Pipeline
 	var vectorIndex *search.VectorIndex
+
+	// Print available embedding providers
+	providers := embedding.AvailableProviders(searchCfg.APIKey, searchCfg.OllamaURL)
+	slog.Info("available embedding providers:")
+	for _, p := range providers {
+		status := "not configured"
+		if p.Configured {
+			status = "ready"
+		}
+		slog.Info("  embedding provider",
+			"name", p.Name,
+			"model", p.Model,
+			"dimensions", p.Dimensions,
+			"status", status,
+		)
+	}
 
 	if searchCfg.IsEnabled() {
 		slog.Info("initializing semantic search",

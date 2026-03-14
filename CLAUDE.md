@@ -65,7 +65,8 @@ make lint           # Run linters
 | `SYNAPBUS_PORT` | HTTP server port | `8080` |
 | `SYNAPBUS_DATA_DIR` | Data directory (SQLite DB, attachments, vector index) | `./data` |
 | `SYNAPBUS_EMBEDDING_PROVIDER` | Embedding provider: `openai`, `gemini`, `ollama` | (none) |
-| `SYNAPBUS_EMBEDDING_API_KEY` | API key for embedding provider | (none) |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings | (none) |
+| `GEMINI_API_KEY` | Google Gemini API key for embeddings | (none) |
 | `SYNAPBUS_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
 
 ## Conventions

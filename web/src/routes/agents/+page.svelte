@@ -12,6 +12,7 @@
 	let registering = $state(false);
 	let registerError = $state('');
 	let newApiKey = $state('');
+	let copiedField = $state('');
 
 	async function loadAgents() {
 		loadingData = true;
@@ -49,9 +50,6 @@
 				type: newType
 			});
 			newApiKey = res.api_key;
-			newName = '';
-			newDisplayName = '';
-			newType = 'ai';
 			await loadAgents();
 		} catch (err: any) {
 			registerError = err.message || 'Failed to register agent';
@@ -59,12 +57,42 @@
 			registering = false;
 		}
 	}
+
+	function resetForm() {
+		showRegister = false;
+		newApiKey = '';
+		newName = '';
+		newDisplayName = '';
+		newType = 'ai';
+		registerError = '';
+	}
+
+	async function copyText(text: string, label: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedField = label;
+			setTimeout(() => (copiedField = ''), 2000);
+		} catch {
+			// fallback
+		}
+	}
+
+	let mcpConfig = $derived(newApiKey ? JSON.stringify({
+		mcpServers: {
+			synapbus: {
+				url: `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080'}/mcp`,
+				headers: {
+					Authorization: `Bearer ${newApiKey}`
+				}
+			}
+		}
+	}, null, 2) : '');
 </script>
 
 <div class="p-5 max-w-5xl">
 	<div class="flex items-center justify-between mb-5">
 		<h1 class="text-xl font-bold text-text-primary font-display">Agents</h1>
-		<button class="btn-primary flex items-center gap-1.5" onclick={() => { showRegister = !showRegister; newApiKey = ''; }}>
+		<button class="btn-primary flex items-center gap-1.5" onclick={() => { if (showRegister) resetForm(); else showRegister = true; }}>
 			{#if showRegister}
 				Cancel
 			{:else}
@@ -77,29 +105,86 @@
 	</div>
 
 	{#if showRegister}
-		<form class="card p-5 mb-5" onsubmit={handleRegister}>
-			<h3 class="font-semibold text-sm text-text-primary font-display mb-3">Register New Agent</h3>
-			{#if registerError}
-				<div class="mb-3 px-3 py-2 bg-accent-red/10 rounded text-xs text-accent-red">{registerError}</div>
-			{/if}
-			{#if newApiKey}
-				<div class="mb-4 p-4 bg-accent-green/10 border border-accent-green/20 rounded-lg">
-					<p class="text-xs font-semibold text-accent-green mb-2">Agent registered! Save this API key - it will not be shown again:</p>
-					<code class="block p-3 bg-bg-primary rounded text-xs font-mono text-text-primary break-all select-all border border-border">{newApiKey}</code>
+		{#if newApiKey}
+			<!-- Success state: show credentials -->
+			<div class="card p-5 mb-5">
+				<div class="flex items-center gap-2 mb-4">
+					<div class="w-8 h-8 rounded-full bg-accent-green/20 flex items-center justify-center">
+						<svg class="w-5 h-5 text-accent-green" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+						</svg>
+					</div>
+					<div>
+						<h3 class="font-semibold text-sm text-text-primary font-display">Agent "{newName}" registered</h3>
+						<p class="text-xs text-text-secondary">Save the API key below — it won't be shown again.</p>
+					</div>
 				</div>
-			{/if}
-			<div class="space-y-3">
-				<input type="text" class="input" placeholder="Agent name (e.g. researcher-01)" bind:value={newName} />
-				<input type="text" class="input" placeholder="Display name (optional)" bind:value={newDisplayName} />
-				<select class="input" bind:value={newType}>
-					<option value="ai">AI Agent</option>
-					<option value="human">Human Agent</option>
-				</select>
-				<button type="submit" class="btn-primary" disabled={registering}>
-					{registering ? 'Registering...' : 'Register'}
+
+				<!-- API Key -->
+				<div class="mb-4">
+					<div class="flex items-center justify-between mb-1.5">
+						<label class="text-xs font-medium text-text-secondary">API Key</label>
+						<button
+							class="text-xs text-text-secondary hover:text-text-primary transition-colors"
+							onclick={() => copyText(newApiKey, 'key')}
+						>
+							{copiedField === 'key' ? 'Copied!' : 'Copy'}
+						</button>
+					</div>
+					<code class="block p-3 bg-bg-primary rounded text-xs font-mono text-accent-green break-all select-all border border-accent-green/20">{newApiKey}</code>
+				</div>
+
+				<!-- MCP Config -->
+				<div class="mb-4">
+					<div class="flex items-center justify-between mb-1.5">
+						<label class="text-xs font-medium text-text-secondary">MCP Configuration</label>
+						<button
+							class="text-xs text-text-secondary hover:text-text-primary transition-colors"
+							onclick={() => copyText(mcpConfig, 'mcp')}
+						>
+							{copiedField === 'mcp' ? 'Copied!' : 'Copy'}
+						</button>
+					</div>
+					<pre class="p-3 bg-bg-primary rounded text-xs font-mono text-text-primary break-all select-all border border-border overflow-x-auto">{mcpConfig}</pre>
+					<p class="text-[10px] text-text-secondary mt-1.5">Add this to your agent's MCP configuration (e.g. claude_desktop_config.json)</p>
+				</div>
+
+				<button
+					class="btn-primary w-full"
+					onclick={resetForm}
+				>
+					Done
 				</button>
 			</div>
-		</form>
+		{:else}
+			<!-- Registration form -->
+			<form class="card p-5 mb-5" onsubmit={handleRegister}>
+				<h3 class="font-semibold text-sm text-text-primary font-display mb-3">Register New Agent</h3>
+				{#if registerError}
+					<div class="mb-3 px-3 py-2 bg-accent-red/10 rounded text-xs text-accent-red">{registerError}</div>
+				{/if}
+				<div class="space-y-3">
+					<div>
+						<label for="agent-name" class="block text-xs font-medium text-text-secondary mb-1">Agent name</label>
+						<input id="agent-name" type="text" class="input" placeholder="e.g. researcher-01" bind:value={newName} required />
+					</div>
+					<div>
+						<label for="agent-display" class="block text-xs font-medium text-text-secondary mb-1">Display name <span class="text-text-secondary">(optional)</span></label>
+						<input id="agent-display" type="text" class="input" placeholder="e.g. Research Agent" bind:value={newDisplayName} />
+					</div>
+					<div>
+						<label for="agent-type" class="block text-xs font-medium text-text-secondary mb-1">Type</label>
+						<select id="agent-type" class="input" bind:value={newType}>
+							<option value="ai">AI Agent</option>
+							<option value="human">Human Agent</option>
+						</select>
+					</div>
+					<button type="submit" class="btn-primary w-full" disabled={registering || !newName.trim()}>
+						{registering ? 'Registering...' : 'Register Agent'}
+					</button>
+				</div>
+			</form>
+		{/if}
 	{/if}
 
 	{#if loadingData}
@@ -116,9 +201,10 @@
 				</div>
 			{/each}
 		</div>
-	{:else if agentList.length === 0}
-		<div class="card p-8 text-center text-text-secondary text-sm">
-			No agents registered yet.
+	{:else if agentList.length === 0 && !showRegister}
+		<div class="card p-8 text-center">
+			<p class="text-text-secondary text-sm mb-3">No agents registered yet.</p>
+			<button class="btn-primary" onclick={() => (showRegister = true)}>Register your first agent</button>
 		</div>
 	{:else}
 		<div class="grid gap-3 sm:grid-cols-2">

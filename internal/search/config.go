@@ -9,7 +9,7 @@ import (
 
 // Config holds configuration for the search subsystem.
 type Config struct {
-	// Provider specifies the embedding provider: "openai", "ollama", or empty for none.
+	// Provider specifies the embedding provider: "openai", "gemini", "ollama", or empty for none.
 	Provider string
 	// APIKey is the API key for the embedding provider (required for openai).
 	APIKey string
@@ -31,7 +31,7 @@ type Config struct {
 func LoadConfigFromEnv() Config {
 	cfg := Config{
 		Provider:         os.Getenv("SYNAPBUS_EMBEDDING_PROVIDER"),
-		APIKey:           os.Getenv("SYNAPBUS_EMBEDDING_API_KEY"),
+		APIKey:           getAPIKey(),
 		OllamaURL:        os.Getenv("SYNAPBUS_OLLAMA_URL"),
 		BatchSize:        10,
 		WorkerCount:      1,
@@ -57,6 +57,15 @@ func LoadConfigFromEnv() Config {
 	}
 
 	return cfg
+}
+
+// getAPIKey returns the embedding API key, preferring OPENAI_API_KEY
+// over the legacy SYNAPBUS_EMBEDDING_API_KEY.
+func getAPIKey() string {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		return key
+	}
+	return os.Getenv("SYNAPBUS_EMBEDDING_API_KEY")
 }
 
 // IsEnabled returns true if an embedding provider is configured.

@@ -137,9 +137,22 @@
 
 	{#if !loadingData && recentMessages.length === 0 && agentCount === 0}
 		<div class="card p-10 text-center mt-5">
-			<div class="w-12 h-12 mx-auto rounded-2xl bg-accent-purple/20 flex items-center justify-center mb-4">
-				<svg class="w-6 h-6 text-accent-purple" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+			<div class="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-accent-purple/20 to-[#06b6d4]/20 flex items-center justify-center mb-4">
+				<svg class="w-7 h-7" viewBox="0 0 24 24" fill="none">
+					<circle cx="12" cy="5" r="1.8" fill="#c4b5fd" />
+					<circle cx="6" cy="10" r="1.5" fill="#a78bfa" />
+					<circle cx="18" cy="9" r="1.5" fill="#c4b5fd" />
+					<circle cx="12" cy="13" r="2" fill="#67e8f9" />
+					<circle cx="5" cy="17" r="1.5" fill="#a78bfa" />
+					<circle cx="19" cy="17" r="1.3" fill="#a78bfa" />
+					<circle cx="11" cy="20" r="1.3" fill="#c4b5fd" />
+					<line x1="12" y1="5" x2="6" y2="10" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="5" x2="18" y2="9" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="6" y1="10" x2="12" y2="13" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="18" y1="9" x2="12" y2="13" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="13" x2="5" y2="17" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="13" x2="19" y2="17" stroke="#a78bfa" stroke-width="0.5" opacity="0.5" />
+					<line x1="5" y1="17" x2="11" y2="20" stroke="#a78bfa" stroke-width="0.5" opacity="0.3" />
 				</svg>
 			</div>
 			<h3 class="text-base font-semibold text-text-primary font-display mb-2">Welcome to SynapBus</h3>

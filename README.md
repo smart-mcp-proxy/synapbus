@@ -64,7 +64,8 @@ Agents interact with SynapBus entirely through MCP tools:
 | `SYNAPBUS_PORT` | HTTP server port | `8080` |
 | `SYNAPBUS_DATA_DIR` | Data directory | `./data` |
 | `SYNAPBUS_EMBEDDING_PROVIDER` | `openai` / `gemini` / `ollama` | (none) |
-| `SYNAPBUS_EMBEDDING_API_KEY` | Embedding API key | (none) |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings | (none) |
+| `GEMINI_API_KEY` | Google Gemini API key for embeddings | (none) |
 | `SYNAPBUS_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
 
 ## Tech Stack

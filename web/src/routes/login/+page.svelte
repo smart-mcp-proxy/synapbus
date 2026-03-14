@@ -36,9 +36,23 @@
 	<div class="w-full max-w-sm relative z-10">
 		<!-- Logo -->
 		<div class="text-center mb-8">
-			<div class="w-16 h-16 mx-auto rounded-2xl bg-accent-purple flex items-center justify-center mb-4">
-				<svg class="w-9 h-9 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-					<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+			<div class="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-accent-purple to-[#06b6d4] flex items-center justify-center mb-4">
+				<svg class="w-9 h-9" viewBox="0 0 24 24" fill="none">
+					<circle cx="12" cy="5" r="1.8" fill="#c4b5fd" />
+					<circle cx="6" cy="10" r="1.5" fill="#a78bfa" />
+					<circle cx="18" cy="9" r="1.5" fill="#c4b5fd" />
+					<circle cx="12" cy="13" r="2" fill="#67e8f9" />
+					<circle cx="5" cy="17" r="1.5" fill="#a78bfa" />
+					<circle cx="19" cy="17" r="1.3" fill="#a78bfa" />
+					<circle cx="11" cy="20" r="1.3" fill="#c4b5fd" />
+					<line x1="12" y1="5" x2="6" y2="10" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="5" x2="18" y2="9" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="6" y1="10" x2="12" y2="13" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="18" y1="9" x2="12" y2="13" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="13" x2="5" y2="17" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="12" y1="13" x2="19" y2="17" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="5" y1="17" x2="11" y2="20" stroke="white" stroke-width="0.5" opacity="0.5" />
+					<line x1="6" y1="10" x2="5" y2="17" stroke="white" stroke-width="0.5" opacity="0.3" />
 				</svg>
 			</div>
 			<h1 class="text-2xl font-bold text-text-primary font-display">SynapBus</h1>

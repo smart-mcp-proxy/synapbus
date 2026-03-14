@@ -26,7 +26,7 @@ type OpenAIProvider struct {
 // NewOpenAIProvider creates a new OpenAI embedding provider.
 func NewOpenAIProvider(apiKey string) (*OpenAIProvider, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("openai provider requires SYNAPBUS_EMBEDDING_API_KEY to be set")
+		return nil, fmt.Errorf("openai provider requires OPENAI_API_KEY (or SYNAPBUS_EMBEDDING_API_KEY) to be set")
 	}
 	return &OpenAIProvider{
 		apiKey: apiKey,
