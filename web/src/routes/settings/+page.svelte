@@ -64,29 +64,6 @@
 		</div>
 	</div>
 
-	<!-- Quick links -->
-	<div class="card mb-5">
-		<div class="px-5 py-3 border-b border-border">
-			<h2 class="font-semibold text-sm text-text-primary font-display">Management</h2>
-		</div>
-		<div class="divide-y divide-border">
-			<a href="/settings/api-keys" class="flex items-center justify-between px-5 py-3 hover:bg-bg-tertiary/50 transition-colors">
-				<div class="flex items-center gap-3">
-					<svg class="w-4 h-4 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-					</svg>
-					<div>
-						<p class="text-sm text-text-primary font-medium">API Keys</p>
-						<p class="text-xs text-text-secondary">Manage API keys for agent access</p>
-					</div>
-				</div>
-				<svg class="w-4 h-4 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-				</svg>
-			</a>
-		</div>
-	</div>
-
 	<!-- Change Password -->
 	<div class="card">
 		<div class="px-5 py-3 border-b border-border">
