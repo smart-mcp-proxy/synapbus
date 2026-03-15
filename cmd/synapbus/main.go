@@ -564,6 +564,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if retentionWorker != nil {
 		adminSvcs.RetentionWorker = retentionWorker
 	}
+	adminSvcs.WebhookService = webhookService
+	adminSvcs.K8sService = k8sService
 	adminServer := admin.NewServer(adminSocketPath, db.DB, adminSvcs, logger)
 	if err := adminServer.Start(); err != nil {
 		return fmt.Errorf("start admin socket: %w", err)

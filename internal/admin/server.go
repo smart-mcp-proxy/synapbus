@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net"
@@ -10,10 +11,26 @@ import (
 	"github.com/synapbus/synapbus/internal/attachments"
 	"github.com/synapbus/synapbus/internal/auth"
 	"github.com/synapbus/synapbus/internal/channels"
+	"github.com/synapbus/synapbus/internal/k8s"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/search"
 	"github.com/synapbus/synapbus/internal/trace"
+	"github.com/synapbus/synapbus/internal/webhooks"
 )
+
+// WebhookServiceProvider defines the webhook operations needed by the admin socket.
+type WebhookServiceProvider interface {
+	RegisterWebhook(ctx context.Context, agentName, url string, events []string, secret string) (*webhooks.Webhook, error)
+	ListWebhooks(ctx context.Context, agentName string) ([]*webhooks.Webhook, error)
+	DeleteWebhook(ctx context.Context, agentName string, webhookID int64) error
+}
+
+// K8sServiceProvider defines the K8s handler operations needed by the admin socket.
+type K8sServiceProvider interface {
+	RegisterHandler(ctx context.Context, agentName string, req k8s.RegisterHandlerRequest) (*k8s.K8sHandler, error)
+	ListHandlers(ctx context.Context, agentName string) ([]*k8s.K8sHandler, error)
+	DeleteHandler(ctx context.Context, agentName string, handlerID int64) error
+}
 
 // Services holds references to all services the admin socket can control.
 type Services struct {
@@ -27,6 +44,8 @@ type Services struct {
 	VectorIndex        *search.VectorIndex
 	SearchService      *search.Service
 	AttachmentService  *attachments.Service
+	WebhookService     WebhookServiceProvider
+	K8sService         K8sServiceProvider
 	DataDir            string
 	RetentionWorker    RetentionStatusProvider
 }

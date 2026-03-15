@@ -705,10 +705,223 @@ func addAdminCommands(rootCmd *cobra.Command) {
 
 	retentionCmd.AddCommand(retentionStatusCmd)
 
+	// ----- webhook commands -----
+	webhookCmd := &cobra.Command{
+		Use:   "webhook",
+		Short: "Manage webhooks",
+	}
+
+	var (
+		webhookRegisterURL    string
+		webhookRegisterEvents string
+		webhookRegisterSecret string
+		webhookRegisterAgent  string
+	)
+	webhookRegisterCmd := &cobra.Command{
+		Use:   "register",
+		Short: "Register a webhook",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("webhook.register", map[string]string{
+				"url":        webhookRegisterURL,
+				"events":     webhookRegisterEvents,
+				"secret":     webhookRegisterSecret,
+				"agent_name": webhookRegisterAgent,
+			})
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	webhookRegisterCmd.Flags().StringVar(&webhookRegisterURL, "url", "", "Webhook endpoint URL")
+	webhookRegisterCmd.Flags().StringVar(&webhookRegisterEvents, "events", "", "Comma-separated event types (e.g. message.received,channel.message)")
+	webhookRegisterCmd.Flags().StringVar(&webhookRegisterSecret, "secret", "", "HMAC signing secret")
+	webhookRegisterCmd.Flags().StringVar(&webhookRegisterAgent, "agent", "", "Agent name to hook events for")
+	webhookRegisterCmd.MarkFlagRequired("url")
+	webhookRegisterCmd.MarkFlagRequired("events")
+	webhookRegisterCmd.MarkFlagRequired("secret")
+	webhookRegisterCmd.MarkFlagRequired("agent")
+
+	var webhookListAgent string
+	webhookListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List webhooks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reqArgs := map[string]interface{}{}
+			if webhookListAgent != "" {
+				reqArgs["agent_name"] = webhookListAgent
+			}
+			resp, err := adminRequest("webhook.list", reqArgs)
+			if err != nil {
+				return err
+			}
+			rows := toMapSlice(resp["data"])
+			if len(rows) == 0 {
+				fmt.Println("No webhooks found.")
+				return nil
+			}
+			printTable([]string{"ID", "AGENT", "URL", "EVENTS", "STATUS", "FAILURES", "CREATED_AT"}, toTableRows(rows, map[string]string{
+				"ID": "id", "AGENT": "agent_name", "URL": "url", "EVENTS": "events",
+				"STATUS": "status", "FAILURES": "consecutive_failures", "CREATED_AT": "created_at",
+			}))
+			return nil
+		},
+	}
+	webhookListCmd.Flags().StringVar(&webhookListAgent, "agent", "", "Filter by agent name")
+
+	var webhookDeleteID int64
+	webhookDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete a webhook",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("webhook.delete", map[string]interface{}{
+				"id": webhookDeleteID,
+			})
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	webhookDeleteCmd.Flags().Int64Var(&webhookDeleteID, "id", 0, "Webhook ID to delete")
+	webhookDeleteCmd.MarkFlagRequired("id")
+
+	webhookCmd.AddCommand(webhookRegisterCmd, webhookListCmd, webhookDeleteCmd)
+
+	// ----- k8s commands -----
+	k8sCmd := &cobra.Command{
+		Use:   "k8s",
+		Short: "Manage Kubernetes job handlers",
+	}
+
+	var (
+		k8sRegisterImage     string
+		k8sRegisterEvents    string
+		k8sRegisterAgent     string
+		k8sRegisterNamespace string
+		k8sRegisterMemory    string
+		k8sRegisterCPU       string
+		k8sRegisterEnv       string
+		k8sRegisterTimeout   int
+	)
+	k8sRegisterCmd := &cobra.Command{
+		Use:   "register",
+		Short: "Register a K8s job handler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reqArgs := map[string]interface{}{
+				"image":      k8sRegisterImage,
+				"events":     k8sRegisterEvents,
+				"agent_name": k8sRegisterAgent,
+			}
+			if k8sRegisterNamespace != "" {
+				reqArgs["namespace"] = k8sRegisterNamespace
+			}
+			if k8sRegisterMemory != "" {
+				reqArgs["resources_memory"] = k8sRegisterMemory
+			}
+			if k8sRegisterCPU != "" {
+				reqArgs["resources_cpu"] = k8sRegisterCPU
+			}
+			if k8sRegisterEnv != "" {
+				reqArgs["env"] = k8sRegisterEnv
+			}
+			if k8sRegisterTimeout > 0 {
+				reqArgs["timeout_seconds"] = k8sRegisterTimeout
+			}
+			resp, err := adminRequest("k8s.register", reqArgs)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterImage, "image", "", "Container image")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterEvents, "events", "", "Comma-separated event types")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterAgent, "agent", "", "Agent name")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterNamespace, "namespace", "", "Kubernetes namespace (optional)")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterMemory, "memory", "", "Memory resource limit (e.g. 256Mi)")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterCPU, "cpu", "", "CPU resource limit (e.g. 500m)")
+	k8sRegisterCmd.Flags().StringVar(&k8sRegisterEnv, "env", "", "Comma-separated KEY=VALUE environment variables")
+	k8sRegisterCmd.Flags().IntVar(&k8sRegisterTimeout, "timeout", 300, "Job timeout in seconds")
+	k8sRegisterCmd.MarkFlagRequired("image")
+	k8sRegisterCmd.MarkFlagRequired("events")
+	k8sRegisterCmd.MarkFlagRequired("agent")
+
+	var k8sListAgent string
+	k8sListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List K8s job handlers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reqArgs := map[string]interface{}{}
+			if k8sListAgent != "" {
+				reqArgs["agent_name"] = k8sListAgent
+			}
+			resp, err := adminRequest("k8s.list", reqArgs)
+			if err != nil {
+				return err
+			}
+			rows := toMapSlice(resp["data"])
+			if len(rows) == 0 {
+				fmt.Println("No K8s handlers found.")
+				return nil
+			}
+			printTable([]string{"ID", "AGENT", "IMAGE", "EVENTS", "NAMESPACE", "STATUS", "CREATED_AT"}, toTableRows(rows, map[string]string{
+				"ID": "id", "AGENT": "agent_name", "IMAGE": "image", "EVENTS": "events",
+				"NAMESPACE": "namespace", "STATUS": "status", "CREATED_AT": "created_at",
+			}))
+			return nil
+		},
+	}
+	k8sListCmd.Flags().StringVar(&k8sListAgent, "agent", "", "Filter by agent name")
+
+	var k8sDeleteID int64
+	k8sDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete a K8s job handler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("k8s.delete", map[string]interface{}{
+				"id": k8sDeleteID,
+			})
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	k8sDeleteCmd.Flags().Int64Var(&k8sDeleteID, "id", 0, "Handler ID to delete")
+	k8sDeleteCmd.MarkFlagRequired("id")
+
+	k8sCmd.AddCommand(k8sRegisterCmd, k8sListCmd, k8sDeleteCmd)
+
+	// ----- attachments commands -----
+	attachmentsCmd := &cobra.Command{
+		Use:   "attachments",
+		Short: "Manage attachments",
+	}
+
+	attachmentsGCCmd := &cobra.Command{
+		Use:   "gc",
+		Short: "Run attachment garbage collection to remove orphaned files",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("attachments.gc", nil)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+
+	attachmentsCmd.AddCommand(attachmentsGCCmd)
+
 	// ----- add persistent flag and commands to root -----
 	rootCmd.PersistentFlags().StringVar(&adminSocket, "socket", "./data/synapbus.sock", "Path to admin Unix socket")
 
-	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd, embeddingsCmd, dbCmd, retentionCmd)
+	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd, embeddingsCmd, dbCmd, retentionCmd, webhookCmd, k8sCmd, attachmentsCmd)
 }
 
 // toTableRows remaps []map[string]string using a header->key mapping.

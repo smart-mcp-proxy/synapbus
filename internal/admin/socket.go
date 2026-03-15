@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/synapbus/synapbus/internal/k8s"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/trace"
 )
@@ -187,6 +188,26 @@ func (s *AdminServer) dispatch(req Request) Response {
 	// --- retention ---
 	case "retention.status":
 		return s.handleRetentionStatus(ctx)
+
+	// --- webhooks ---
+	case "webhook.register":
+		return s.handleWebhookRegister(ctx, req.Args)
+	case "webhook.list":
+		return s.handleWebhookList(ctx, req.Args)
+	case "webhook.delete":
+		return s.handleWebhookDelete(ctx, req.Args)
+
+	// --- k8s ---
+	case "k8s.register":
+		return s.handleK8sRegister(ctx, req.Args)
+	case "k8s.list":
+		return s.handleK8sList(ctx, req.Args)
+	case "k8s.delete":
+		return s.handleK8sDelete(ctx, req.Args)
+
+	// --- attachments ---
+	case "attachments.gc":
+		return s.handleAttachmentsGC(ctx)
 
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %s", req.Command)}
@@ -1136,6 +1157,369 @@ func (s *AdminServer) handleRetentionStatus(ctx context.Context) Response {
 	return Response{OK: true, Data: map[string]interface{}{
 		"enabled": false,
 		"message": "retention worker not configured",
+	}}
+}
+
+// ---------- webhook handlers ----------
+
+func (s *AdminServer) handleWebhookRegister(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		URL       string `json:"url"`
+		Events    string `json:"events"`
+		Secret    string `json:"secret"`
+		AgentName string `json:"agent_name"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.URL == "" || p.Events == "" || p.Secret == "" || p.AgentName == "" {
+		return Response{OK: false, Error: "url, events, secret, and agent_name are required"}
+	}
+
+	if s.services.WebhookService == nil {
+		return Response{OK: false, Error: "webhook service not configured"}
+	}
+
+	events := strings.Split(p.Events, ",")
+	for i := range events {
+		events[i] = strings.TrimSpace(events[i])
+	}
+
+	wh, err := s.services.WebhookService.RegisterWebhook(ctx, p.AgentName, p.URL, events, p.Secret)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"id":     wh.ID,
+		"url":    wh.URL,
+		"events": wh.Events,
+		"status": wh.Status,
+	}}
+}
+
+func (s *AdminServer) handleWebhookList(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		AgentName string `json:"agent_name"`
+	}
+	if args != nil {
+		json.Unmarshal(args, &p)
+	}
+
+	if s.services.WebhookService == nil {
+		return Response{OK: false, Error: "webhook service not configured"}
+	}
+
+	if p.AgentName == "" {
+		// Admin: list all webhooks by querying DB directly.
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT id, agent_name, url, events, status, consecutive_failures, created_at
+			 FROM webhooks ORDER BY created_at DESC`)
+		if err != nil {
+			return Response{OK: false, Error: err.Error()}
+		}
+		defer rows.Close()
+
+		type whRow struct {
+			ID                  int64    `json:"id"`
+			AgentName           string   `json:"agent_name"`
+			URL                 string   `json:"url"`
+			Events              []string `json:"events"`
+			Status              string   `json:"status"`
+			ConsecutiveFailures int      `json:"consecutive_failures"`
+			CreatedAt           string   `json:"created_at"`
+		}
+
+		var result []whRow
+		for rows.Next() {
+			var r whRow
+			var eventsJSON string
+			var createdAt time.Time
+			if err := rows.Scan(&r.ID, &r.AgentName, &r.URL, &eventsJSON, &r.Status, &r.ConsecutiveFailures, &createdAt); err != nil {
+				return Response{OK: false, Error: "scan: " + err.Error()}
+			}
+			json.Unmarshal([]byte(eventsJSON), &r.Events)
+			if r.Events == nil {
+				r.Events = []string{}
+			}
+			r.CreatedAt = createdAt.Format(time.RFC3339)
+			result = append(result, r)
+		}
+		if result == nil {
+			result = []whRow{}
+		}
+		return Response{OK: true, Data: result}
+	}
+
+	webhookList, err := s.services.WebhookService.ListWebhooks(ctx, p.AgentName)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	type whRow struct {
+		ID                  int64    `json:"id"`
+		AgentName           string   `json:"agent_name"`
+		URL                 string   `json:"url"`
+		Events              []string `json:"events"`
+		Status              string   `json:"status"`
+		ConsecutiveFailures int      `json:"consecutive_failures"`
+		CreatedAt           string   `json:"created_at"`
+	}
+
+	result := make([]whRow, len(webhookList))
+	for i, wh := range webhookList {
+		result[i] = whRow{
+			ID:                  wh.ID,
+			AgentName:           wh.AgentName,
+			URL:                 wh.URL,
+			Events:              wh.Events,
+			Status:              wh.Status,
+			ConsecutiveFailures: wh.ConsecutiveFailures,
+			CreatedAt:           wh.CreatedAt.Format(time.RFC3339),
+		}
+	}
+	return Response{OK: true, Data: result}
+}
+
+func (s *AdminServer) handleWebhookDelete(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.ID <= 0 {
+		return Response{OK: false, Error: "id is required"}
+	}
+
+	if s.services.WebhookService == nil {
+		return Response{OK: false, Error: "webhook service not configured"}
+	}
+
+	// Admin bypass: look up the webhook's agent_name first, then delete.
+	var agentName string
+	err := s.db.QueryRowContext(ctx, "SELECT agent_name FROM webhooks WHERE id = ?", p.ID).Scan(&agentName)
+	if err != nil {
+		return Response{OK: false, Error: "webhook not found"}
+	}
+
+	if err := s.services.WebhookService.DeleteWebhook(ctx, agentName, p.ID); err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"deleted": p.ID,
+	}}
+}
+
+// ---------- k8s handlers ----------
+
+func (s *AdminServer) handleK8sRegister(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		Image           string `json:"image"`
+		Events          string `json:"events"`
+		AgentName       string `json:"agent_name"`
+		Namespace       string `json:"namespace"`
+		ResourcesMemory string `json:"resources_memory"`
+		ResourcesCPU    string `json:"resources_cpu"`
+		Env             string `json:"env"`
+		TimeoutSeconds  int    `json:"timeout_seconds"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.Image == "" || p.Events == "" || p.AgentName == "" {
+		return Response{OK: false, Error: "image, events, and agent_name are required"}
+	}
+
+	if s.services.K8sService == nil {
+		return Response{OK: false, Error: "k8s service not configured"}
+	}
+
+	events := strings.Split(p.Events, ",")
+	for i := range events {
+		events[i] = strings.TrimSpace(events[i])
+	}
+
+	// Parse env from comma-separated KEY=VALUE pairs.
+	envMap := map[string]string{}
+	if p.Env != "" {
+		for _, pair := range strings.Split(p.Env, ",") {
+			pair = strings.TrimSpace(pair)
+			parts := strings.SplitN(pair, "=", 2)
+			if len(parts) == 2 {
+				envMap[parts[0]] = parts[1]
+			}
+		}
+	}
+
+	timeout := p.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 300
+	}
+
+	req := k8s.RegisterHandlerRequest{
+		Image:           p.Image,
+		Events:          events,
+		Namespace:       p.Namespace,
+		ResourcesMemory: p.ResourcesMemory,
+		ResourcesCPU:    p.ResourcesCPU,
+		Env:             envMap,
+		TimeoutSeconds:  timeout,
+	}
+
+	handler, err := s.services.K8sService.RegisterHandler(ctx, p.AgentName, req)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"id":     handler.ID,
+		"image":  handler.Image,
+		"events": handler.Events,
+		"status": handler.Status,
+	}}
+}
+
+func (s *AdminServer) handleK8sList(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		AgentName string `json:"agent_name"`
+	}
+	if args != nil {
+		json.Unmarshal(args, &p)
+	}
+
+	if s.services.K8sService == nil {
+		return Response{OK: false, Error: "k8s service not configured"}
+	}
+
+	if p.AgentName == "" {
+		// Admin: list all K8s handlers by querying DB directly.
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT id, agent_name, image, events, namespace, resources_memory, resources_cpu, timeout_seconds, status, created_at
+			 FROM k8s_handlers ORDER BY created_at DESC`)
+		if err != nil {
+			return Response{OK: false, Error: err.Error()}
+		}
+		defer rows.Close()
+
+		type handlerRow struct {
+			ID              int64    `json:"id"`
+			AgentName       string   `json:"agent_name"`
+			Image           string   `json:"image"`
+			Events          []string `json:"events"`
+			Namespace       string   `json:"namespace"`
+			ResourcesMemory string   `json:"resources_memory"`
+			ResourcesCPU    string   `json:"resources_cpu"`
+			TimeoutSeconds  int      `json:"timeout_seconds"`
+			Status          string   `json:"status"`
+			CreatedAt       string   `json:"created_at"`
+		}
+
+		var result []handlerRow
+		for rows.Next() {
+			var r handlerRow
+			var eventsJSON string
+			var createdAt time.Time
+			if err := rows.Scan(&r.ID, &r.AgentName, &r.Image, &eventsJSON, &r.Namespace,
+				&r.ResourcesMemory, &r.ResourcesCPU, &r.TimeoutSeconds, &r.Status, &createdAt); err != nil {
+				return Response{OK: false, Error: "scan: " + err.Error()}
+			}
+			json.Unmarshal([]byte(eventsJSON), &r.Events)
+			if r.Events == nil {
+				r.Events = []string{}
+			}
+			r.CreatedAt = createdAt.Format(time.RFC3339)
+			result = append(result, r)
+		}
+		if result == nil {
+			result = []handlerRow{}
+		}
+		return Response{OK: true, Data: result}
+	}
+
+	handlers, err := s.services.K8sService.ListHandlers(ctx, p.AgentName)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	type handlerRow struct {
+		ID              int64    `json:"id"`
+		AgentName       string   `json:"agent_name"`
+		Image           string   `json:"image"`
+		Events          []string `json:"events"`
+		Namespace       string   `json:"namespace"`
+		ResourcesMemory string   `json:"resources_memory"`
+		ResourcesCPU    string   `json:"resources_cpu"`
+		TimeoutSeconds  int      `json:"timeout_seconds"`
+		Status          string   `json:"status"`
+		CreatedAt       string   `json:"created_at"`
+	}
+
+	result := make([]handlerRow, len(handlers))
+	for i, h := range handlers {
+		result[i] = handlerRow{
+			ID:              h.ID,
+			AgentName:       h.AgentName,
+			Image:           h.Image,
+			Events:          h.Events,
+			Namespace:       h.Namespace,
+			ResourcesMemory: h.ResourcesMemory,
+			ResourcesCPU:    h.ResourcesCPU,
+			TimeoutSeconds:  h.TimeoutSeconds,
+			Status:          h.Status,
+			CreatedAt:       h.CreatedAt.Format(time.RFC3339),
+		}
+	}
+	return Response{OK: true, Data: result}
+}
+
+func (s *AdminServer) handleK8sDelete(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.ID <= 0 {
+		return Response{OK: false, Error: "id is required"}
+	}
+
+	if s.services.K8sService == nil {
+		return Response{OK: false, Error: "k8s service not configured"}
+	}
+
+	// Admin bypass: look up the handler's agent_name first, then delete.
+	var agentName string
+	err := s.db.QueryRowContext(ctx, "SELECT agent_name FROM k8s_handlers WHERE id = ?", p.ID).Scan(&agentName)
+	if err != nil {
+		return Response{OK: false, Error: "handler not found"}
+	}
+
+	if err := s.services.K8sService.DeleteHandler(ctx, agentName, p.ID); err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"deleted": p.ID,
+	}}
+}
+
+// ---------- attachments handlers ----------
+
+func (s *AdminServer) handleAttachmentsGC(ctx context.Context) Response {
+	if s.services.AttachmentService == nil {
+		return Response{OK: false, Error: "attachment service not configured"}
+	}
+
+	result, err := s.services.AttachmentService.GarbageCollect(ctx)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"files_removed":  result.FilesRemoved,
+		"bytes_reclaimed": result.BytesReclaimed,
 	}}
 }
 
