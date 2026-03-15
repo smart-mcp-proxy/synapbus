@@ -115,6 +115,9 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 - What happens when TypeScript code has syntax errors? esbuild transpilation fails and returns the syntax error with line/column info.
 - What happens when `execute` code tries to access dangerous APIs (require, fetch, setTimeout)? The sandbox blocks them and returns an error listing the disallowed API.
 - What happens when `send_message` is called with empty body? Validation error returned.
+- What happens when `send_message` `reply_to` references a non-existent message? Validation error returned.
+- What happens when `execute` code allocates excessive memory? Memory limit enforcement terminates it and returns an error.
+- What happens when an agent calls `search` expecting message results? The tool returns action definitions, not messages. The `search` tool description explicitly states it is for action discovery.
 - What happens when pagination offset exceeds total results? Empty result set returned with the total count.
 
 ## Requirements *(mandatory)*
@@ -125,17 +128,26 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 
 - **FR-001**: System MUST expose exactly 4 MCP tools: `my_status`, `search`, `execute`, `send_message`.
 - **FR-002**: System MUST remove all 30 previously individual MCP tools and replace them with the 4-tool architecture.
-- **FR-003**: All 23 agent-facing operations (messaging, channels, swarm, attachments upload/download) MUST remain callable as actions via the `execute` tool.
+- **FR-003**: All agent-facing operations listed below MUST remain callable as actions via the `execute` tool. The `send_message` action is also accessible as a dedicated MCP tool.
+
+**Action Catalog** (23 operations, by category):
+
+| Category | Actions |
+|----------|---------|
+| Messaging | `send_message`, `read_inbox`, `claim_messages`, `mark_done`, `search_messages`, `discover_agents` |
+| Channels | `create_channel`, `join_channel`, `leave_channel`, `list_channels`, `invite_to_channel`, `kick_from_channel`, `get_channel_messages`, `send_channel_message`, `update_channel` |
+| Swarm | `post_task`, `bid_task`, `accept_bid`, `complete_task`, `list_tasks` |
+| Attachments | `upload_attachment`, `download_attachment` |
 
 **my_status Tool**
 
-- **FR-010**: `my_status` MUST accept zero parameters and return: agent identity, pending direct message count, channel mention count, channel memberships, system notifications, and usage statistics.
+- **FR-010**: `my_status` MUST accept zero parameters and return: agent identity, pending direct message count, channel mention count, channel memberships, system notifications, and usage statistics (channels joined, unread channel messages, total messages sent/received).
 - **FR-011**: `my_status` response MUST include instructions guiding agents to use `search` and `execute` for further operations.
 
 **search Tool**
 
-- **FR-020**: `search` MUST accept a natural-language query string and return matching actions ranked by relevance.
-- **FR-021**: `search` results MUST include: action name, description, parameter schema, and at least one usage example per action.
+- **FR-020**: `search` MUST accept a natural-language query string and return matching actions ranked by relevance. Note: `search` is for action/tool discovery only — message search is a separate action (`search_messages`) called via `execute`.
+- **FR-021**: `search` results MUST include: action name, description, parameter schema, relevance score, and at least one usage example per action.
 - **FR-022**: `search` MUST use BM25 full-text ranking over action documentation.
 - **FR-023**: `search` MUST accept an optional `limit` parameter (default 5, max 20).
 
@@ -143,20 +155,23 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 
 - **FR-030**: `execute` MUST accept a `code` parameter containing JavaScript or TypeScript source code.
 - **FR-031**: `execute` MUST provide a `call(action_name, args)` function within the execution context that invokes any registered action.
-- **FR-032**: `execute` MUST transpile TypeScript to JavaScript before execution using esbuild (type-stripping only, no semantic validation).
+- **FR-032**: `execute` MUST transpile TypeScript to JavaScript before execution (type-stripping only, no semantic validation).
 - **FR-033**: `execute` MUST enforce a configurable timeout (default 120 seconds) and terminate execution if exceeded.
 - **FR-034**: `execute` MUST enforce a configurable maximum number of `call()` invocations per execution (default 50).
 - **FR-035**: `execute` MUST sandbox the runtime by disabling: `require`, `import`, `fetch`, `setTimeout`, `setInterval`, `XMLHttpRequest`, and filesystem/network access.
 - **FR-036**: `execute` MUST propagate the calling agent's authentication context to all `call()` invocations.
 - **FR-037**: `execute` MUST return the final expression value of the code as the tool result, serialized as JSON.
 - **FR-038**: `execute` MUST return clear error messages for: syntax errors (with line/column), runtime errors (with stack trace), timeout, and call limit exceeded.
-- **FR-039**: `execute` MUST support a runtime pool for concurrent agent executions.
+- **FR-039**: When multiple agents call `execute` concurrently, all executions MUST complete or fail independently without interference.
+- **FR-039a**: `execute` MUST enforce a configurable maximum memory usage per execution and terminate if exceeded.
 
 **send_message Tool**
 
 - **FR-040**: `send_message` MUST accept either `to` (agent name for DM) or `channel` (name or ID for channel message), but not both.
 - **FR-041**: `send_message` MUST accept: `body` (required), `subject`, `priority` (1-10, default 5), `metadata` (JSON string), `reply_to` (message ID).
 - **FR-042**: `send_message` MUST validate that the agent is a member of the target channel before posting.
+- **FR-043**: When `channel` is specified, `send_message` MUST broadcast the message to all channel members (preserving current `send_channel_message` semantics). The `channel` parameter MUST accept either a channel name (string) or channel ID (number).
+- **FR-044**: When `reply_to` references a non-existent message ID, `send_message` MUST return a validation error.
 
 **Pagination**
 
@@ -175,7 +190,7 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 - **FR-070**: System MUST provide `synapbus webhook register|list|delete` CLI subcommands with equivalent functionality to the removed MCP tools.
 - **FR-071**: System MUST provide `synapbus k8s register|list|delete` CLI subcommands with equivalent functionality to the removed MCP tools.
 - **FR-072**: System MUST provide `synapbus attachments gc` CLI subcommand with equivalent functionality to the removed MCP tool.
-- **FR-073**: CLI subcommands MUST connect to a running SynapBus instance (via API or direct DB access) to perform operations.
+- **FR-073**: CLI subcommands MUST connect to a running SynapBus instance to perform operations.
 
 ### Key Entities
 
@@ -187,7 +202,7 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 
 ### Measurable Outcomes
 
-- **SC-001**: MCP tool definitions sent to agents are reduced from 30 to 4, reducing token overhead by at least 80%.
+- **SC-001**: MCP tool definitions sent to agents are reduced from 30 to 4.
 - **SC-002**: All 23 agent-facing operations remain fully functional and accessible via the execute tool.
 - **SC-003**: Agents can discover any action by natural-language search and receive usable schemas and examples within a single search call.
 - **SC-004**: The most common operation (sending a message) completes in a single tool call without requiring search or execute.
@@ -203,5 +218,7 @@ An agent executes a complex workflow in a single `execute` call — e.g., readin
 - The goja pure-Go JavaScript engine and esbuild pure-Go transpiler satisfy the zero-CGO constraint.
 - BM25 can be implemented with a lightweight in-memory index (no external search engine) since the action catalog is small (~23 entries).
 - The `call()` bridge reuses existing service-layer methods — no new business logic is needed for individual actions.
-- CLI subcommands will connect to the running instance via the internal REST API (same as Web UI).
+- CLI subcommands will connect to the running instance via the existing admin interface pattern.
 - The runtime pool size is configurable and defaults to a reasonable number for single-node deployment (e.g., 10 concurrent runtimes).
+- This is a breaking change. Existing agents using the 30 individual MCP tools must be updated to use the 4-tool architecture. No backward compatibility layer is provided.
+- TypeScript transpilation uses esbuild (pure Go, zero CGO). BM25 search uses a lightweight in-memory implementation.

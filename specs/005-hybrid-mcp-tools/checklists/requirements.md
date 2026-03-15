@@ -31,6 +31,7 @@
 
 ## Notes
 
-- Spec references "goja", "esbuild", "BM25" in Assumptions section — these are implementation choices documented as assumptions, not requirements. The functional requirements themselves are technology-agnostic (e.g., FR-032 says "transpile TypeScript" not "use esbuild").
-- FR-035 lists specific APIs to block — this is acceptable as it defines security boundaries, not implementation choice.
-- All items pass validation. Spec is ready for clarify or plan phase.
+- Technology choices (goja, esbuild, BM25) are documented in Assumptions section only. Functional requirements are technology-agnostic (e.g., FR-032 says "transpile TypeScript" without naming a tool).
+- FR-035 lists specific APIs to block — this defines security boundaries, not implementation choice.
+- FR-022 references "BM25" — this is an algorithm specification, not a framework/library reference.
+- All items pass validation after spec review round 1 fixes (enumerated action catalog, memory limits, broadcast semantics, migration note, edge cases). Spec is ready for clarify or plan phase.
