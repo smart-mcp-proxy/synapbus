@@ -22,7 +22,6 @@
 		if (path.startsWith('/dm/')) return ($page.params.name ?? 'DM');
 		if (path.startsWith('/agents/')) return ($page.params.name ?? 'Agent');
 		if (path === '/agents') return 'Agents';
-		if (path === '/settings/api-keys') return 'API Keys';
 		if (path === '/settings') return 'Settings';
 		return 'SynapBus';
 	});
