@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
+	"github.com/synapbus/synapbus/internal/actions"
 	"github.com/synapbus/synapbus/internal/admin"
 	"github.com/synapbus/synapbus/internal/agents"
 	"github.com/synapbus/synapbus/internal/api"
@@ -33,6 +34,7 @@ import (
 	"github.com/synapbus/synapbus/internal/console"
 	"github.com/synapbus/synapbus/internal/dispatcher"
 	"github.com/synapbus/synapbus/internal/health"
+	"github.com/synapbus/synapbus/internal/jsruntime"
 	k8spkg "github.com/synapbus/synapbus/internal/k8s"
 	mcpserver "github.com/synapbus/synapbus/internal/mcp"
 	"github.com/synapbus/synapbus/internal/messaging"
@@ -423,7 +425,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create K8s job runner and service
 	k8sRunner := k8spkg.NewJobRunner(slog.Default())
 	k8sStore := k8spkg.NewSQLiteK8sStore(db.DB)
-	k8sService := k8spkg.NewK8sService(k8sStore, k8sRunner)
+	_ = k8spkg.NewK8sService(k8sStore, k8sRunner) // K8s service for CLI admin commands; not passed to MCP
 	k8sDispatcher := k8spkg.NewK8sDispatcher(k8sStore, k8sRunner, slog.Default())
 
 	if k8sRunner.IsAvailable() {
@@ -436,8 +438,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	eventDispatcher := dispatcher.NewMultiDispatcher(slog.Default(), deliveryEngine, k8sDispatcher)
 	msgService.SetDispatcher(eventDispatcher)
 
-	// Create MCP server (with swarm + attachment + search + webhook + K8s tools)
-	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, con, webhookService, k8sService, db.DB)
+	// Create JS runtime pool and action registry for hybrid MCP tools
+	jsPool := jsruntime.NewPool(10)
+	defer jsPool.Close()
+
+	actionRegistry := actions.NewRegistry()
+	actionIndex := actions.NewIndex(actionRegistry.List())
+
+	// Create MCP server (4 hybrid tools: my_status, send_message, search, execute)
+	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, con, jsPool, actionRegistry, actionIndex, db.DB)
 	startTime := time.Now()
 
 	// Start task expiry worker
