@@ -24,9 +24,3 @@ type Example struct {
 	Description string `json:"description"`
 	Code        string `json:"code"` // JS code example using call()
 }
-
-// SearchResult is an action with a relevance score.
-type SearchResult struct {
-	Action Action  `json:"action"`
-	Score  float64 `json:"score"`
-}

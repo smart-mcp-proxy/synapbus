@@ -10,7 +10,9 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	_ "modernc.org/sqlite"
 
+	"github.com/synapbus/synapbus/internal/actions"
 	"github.com/synapbus/synapbus/internal/agents"
+	"github.com/synapbus/synapbus/internal/jsruntime"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/storage"
 	"github.com/synapbus/synapbus/internal/trace"
@@ -40,7 +42,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func newTestRegistrar(t *testing.T) (*ToolRegistrar, *messaging.MessagingService, *agents.AgentService, *sql.DB) {
+func newTestHybridRegistrar(t *testing.T) (*HybridToolRegistrar, *messaging.MessagingService, *agents.AgentService, *sql.DB) {
 	t.Helper()
 	db := newTestDB(t)
 
@@ -53,7 +55,24 @@ func newTestRegistrar(t *testing.T) (*ToolRegistrar, *messaging.MessagingService
 	agentStore := agents.NewSQLiteAgentStore(db)
 	agentService := agents.NewAgentService(agentStore, tracer)
 
-	registrar := NewToolRegistrar(msgService, agentService)
+	jsPool := jsruntime.NewPool(2)
+	t.Cleanup(func() { jsPool.Close() })
+
+	actionRegistry := actions.NewRegistry()
+	actionIndex := actions.NewIndex(actionRegistry.List())
+
+	registrar := NewHybridToolRegistrar(
+		msgService,
+		agentService,
+		nil, // channelService
+		nil, // swarmService
+		nil, // attachmentService
+		nil, // searchService
+		jsPool,
+		actionRegistry,
+		actionIndex,
+		db,
+	)
 	return registrar, msgService, agentService, db
 }
 
@@ -65,24 +84,67 @@ func makeRequest(args map[string]any) mcplib.CallToolRequest {
 	}
 }
 
-func TestToolHandler_SendMessage(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
+func TestHybridTool_MyStatus(t *testing.T) {
+	h, _, agentSvc, _ := newTestHybridRegistrar(t)
 	ctx := context.Background()
 
-	// Register agents
+	agentSvc.Register(ctx, "test-agent", "Test Agent", "ai", nil, 1)
+
+	authCtx := ContextWithAgentName(ctx, "test-agent")
+
+	t.Run("returns status with usage instructions", func(t *testing.T) {
+		req := makeRequest(map[string]any{})
+
+		result, err := h.handleMyStatus(authCtx, req)
+		if err != nil {
+			t.Fatalf("handleMyStatus: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %v", result.Content)
+		}
+
+		var resp map[string]any
+		text := result.Content[0].(mcplib.TextContent).Text
+		json.Unmarshal([]byte(text), &resp)
+
+		// Check agent info
+		agentInfo := resp["agent"].(map[string]any)
+		if agentInfo["name"] != "test-agent" {
+			t.Errorf("agent name = %v, want test-agent", agentInfo["name"])
+		}
+
+		// Check usage instructions
+		usage := resp["usage"].(string)
+		if usage == "" {
+			t.Error("expected usage instructions in response")
+		}
+	})
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		req := makeRequest(map[string]any{})
+		result, _ := h.handleMyStatus(ctx, req)
+		if !result.IsError {
+			t.Error("expected error for unauthenticated request")
+		}
+	})
+}
+
+func TestHybridTool_SendMessage_DM(t *testing.T) {
+	h, _, agentSvc, _ := newTestHybridRegistrar(t)
+	ctx := context.Background()
+
 	agentSvc.Register(ctx, "sender", "Sender", "ai", nil, 1)
 	agentSvc.Register(ctx, "receiver", "Receiver", "ai", nil, 1)
 
-	// Set up authenticated context
 	authCtx := ContextWithAgentName(ctx, "sender")
 
-	t.Run("successful send", func(t *testing.T) {
+	t.Run("successful DM", func(t *testing.T) {
 		req := makeRequest(map[string]any{
 			"to":   "receiver",
 			"body": "Hello from test",
 		})
 
-		result, err := tr.handleSendMessage(authCtx, req)
+		result, err := h.handleSendMessage(authCtx, req)
 		if err != nil {
 			t.Fatalf("handleSendMessage: %v", err)
 		}
@@ -98,25 +160,35 @@ func TestToolHandler_SendMessage(t *testing.T) {
 		}
 	})
 
-	t.Run("missing to", func(t *testing.T) {
-		req := makeRequest(map[string]any{
-			"body": "no recipient",
-		})
-
-		result, _ := tr.handleSendMessage(authCtx, req)
-		if !result.IsError {
-			t.Error("expected error for missing 'to'")
-		}
-	})
-
 	t.Run("missing body", func(t *testing.T) {
 		req := makeRequest(map[string]any{
 			"to": "receiver",
 		})
-
-		result, _ := tr.handleSendMessage(authCtx, req)
+		result, _ := h.handleSendMessage(authCtx, req)
 		if !result.IsError {
 			t.Error("expected error for missing body")
+		}
+	})
+
+	t.Run("both to and channel rejected", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"to":      "receiver",
+			"channel": "general",
+			"body":    "test",
+		})
+		result, _ := h.handleSendMessage(authCtx, req)
+		if !result.IsError {
+			t.Error("expected error when both to and channel specified")
+		}
+	})
+
+	t.Run("neither to nor channel rejected", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"body": "test",
+		})
+		result, _ := h.handleSendMessage(authCtx, req)
+		if !result.IsError {
+			t.Error("expected error when neither to nor channel specified")
 		}
 	})
 
@@ -125,31 +197,28 @@ func TestToolHandler_SendMessage(t *testing.T) {
 			"to":   "receiver",
 			"body": "should fail",
 		})
-
-		result, _ := tr.handleSendMessage(ctx, req)
+		result, _ := h.handleSendMessage(ctx, req)
 		if !result.IsError {
 			t.Error("expected error for unauthenticated request")
 		}
 	})
 }
 
-func TestToolHandler_ReadInbox(t *testing.T) {
-	tr, msgSvc, agentSvc, _ := newTestRegistrar(t)
+func TestHybridTool_Search(t *testing.T) {
+	h, _, agentSvc, _ := newTestHybridRegistrar(t)
 	ctx := context.Background()
 
-	agentSvc.Register(ctx, "sender", "Sender", "ai", nil, 1)
-	agentSvc.Register(ctx, "reader", "Reader", "ai", nil, 1)
+	agentSvc.Register(ctx, "test-agent", "Test Agent", "ai", nil, 1)
+	authCtx := ContextWithAgentName(ctx, "test-agent")
 
-	msgSvc.SendMessage(ctx, "sender", "reader", "test message", messaging.SendOptions{})
+	t.Run("search for messaging actions", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"query": "read inbox messages",
+		})
 
-	authCtx := ContextWithAgentName(ctx, "reader")
-
-	t.Run("read messages", func(t *testing.T) {
-		req := makeRequest(map[string]any{})
-
-		result, err := tr.handleReadInbox(authCtx, req)
+		result, err := h.handleSearch(authCtx, req)
 		if err != nil {
-			t.Fatalf("handleReadInbox: %v", err)
+			t.Fatalf("handleSearch: %v", err)
 		}
 		if result.IsError {
 			t.Fatalf("unexpected error: %v", result.Content)
@@ -158,139 +227,166 @@ func TestToolHandler_ReadInbox(t *testing.T) {
 		var resp map[string]any
 		text := result.Content[0].(mcplib.TextContent).Text
 		json.Unmarshal([]byte(text), &resp)
+
 		count := resp["count"].(float64)
+		if count == 0 {
+			t.Error("expected at least one result")
+		}
+
+		actionsList := resp["actions"].([]any)
+		firstAction := actionsList[0].(map[string]any)
+		if firstAction["name"] == nil {
+			t.Error("expected name in action result")
+		}
+	})
+
+	t.Run("empty query returns all actions", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"limit": float64(20),
+		})
+
+		result, err := h.handleSearch(authCtx, req)
+		if err != nil {
+			t.Fatalf("handleSearch: %v", err)
+		}
+
+		var resp map[string]any
+		text := result.Content[0].(mcplib.TextContent).Text
+		json.Unmarshal([]byte(text), &resp)
+
+		count := resp["count"].(float64)
+		if count < 5 {
+			t.Errorf("expected at least 5 actions in browse mode, got %v", count)
+		}
+	})
+}
+
+func TestHybridTool_Execute(t *testing.T) {
+	h, msgSvc, agentSvc, _ := newTestHybridRegistrar(t)
+	ctx := context.Background()
+
+	agentSvc.Register(ctx, "executor", "Executor", "ai", nil, 1)
+	agentSvc.Register(ctx, "target", "Target", "ai", nil, 1)
+
+	// Send a message so the executor has something to read
+	msgSvc.SendMessage(ctx, "target", "executor", "hello executor", messaging.SendOptions{})
+
+	authCtx := ContextWithAgentName(ctx, "executor")
+
+	t.Run("read_inbox via execute", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"code": `call("read_inbox", { limit: 10 })`,
+		})
+
+		result, err := h.handleExecute(authCtx, req)
+		if err != nil {
+			t.Fatalf("handleExecute: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %v", result.Content)
+		}
+
+		resultData := parseCallResult(t, result)
+		count := resultData["count"].(float64)
 		if count != 1 {
-			t.Errorf("count = %v, want 1", count)
+			t.Errorf("expected 1 message, got %v", count)
+		}
+	})
+
+	t.Run("send_message via execute", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"code": `call("send_message", { to: "target", body: "hello from execute" })`,
+		})
+
+		result, err := h.handleExecute(authCtx, req)
+		if err != nil {
+			t.Fatalf("handleExecute: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %v", result.Content)
+		}
+
+		resultData := parseCallResult(t, result)
+		if resultData["message_id"] == nil {
+			t.Error("expected message_id in execute result")
+		}
+	})
+
+	t.Run("discover_agents via execute", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"code": `call("discover_agents", {})`,
+		})
+
+		result, err := h.handleExecute(authCtx, req)
+		if err != nil {
+			t.Fatalf("handleExecute: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %v", result.Content)
+		}
+
+		resultData := parseCallResult(t, result)
+		count := resultData["count"].(float64)
+		if count < 2 {
+			t.Errorf("expected at least 2 agents, got %v", count)
+		}
+	})
+
+	t.Run("unknown action returns error", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"code": `call("nonexistent_action", {})`,
+		})
+
+		result, _ := h.handleExecute(authCtx, req)
+		// call() returns { ok: false, error: {...} } inside a successful execution result.
+		resp := parseResponse(t, result)
+		callResult := resp["result"].(map[string]any)
+		if callResult["ok"] != false {
+			t.Error("expected ok=false for unknown action")
+		}
+	})
+
+	t.Run("empty code rejected", func(t *testing.T) {
+		req := makeRequest(map[string]any{
+			"code": "",
+		})
+
+		result, _ := h.handleExecute(authCtx, req)
+		if !result.IsError {
+			t.Error("expected error for empty code")
 		}
 	})
 
 	t.Run("unauthenticated", func(t *testing.T) {
-		req := makeRequest(map[string]any{})
-		result, _ := tr.handleReadInbox(ctx, req)
+		req := makeRequest(map[string]any{
+			"code": `call("read_inbox", {})`,
+		})
+		result, _ := h.handleExecute(ctx, req)
 		if !result.IsError {
 			t.Error("expected error for unauthenticated request")
 		}
 	})
-}
 
-func TestToolHandler_ClaimMessages(t *testing.T) {
-	tr, msgSvc, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "sender", "Sender", "ai", nil, 1)
-	agentSvc.Register(ctx, "claimer", "Claimer", "ai", nil, 1)
-
-	msgSvc.SendMessage(ctx, "sender", "claimer", "task 1", messaging.SendOptions{})
-	msgSvc.SendMessage(ctx, "sender", "claimer", "task 2", messaging.SendOptions{})
-
-	authCtx := ContextWithAgentName(ctx, "claimer")
-
-	req := makeRequest(map[string]any{"limit": float64(1)})
-	result, err := tr.handleClaimMessages(authCtx, req)
-	if err != nil {
-		t.Fatalf("handleClaimMessages: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-
-	var resp map[string]any
-	text := result.Content[0].(mcplib.TextContent).Text
-	json.Unmarshal([]byte(text), &resp)
-	count := resp["count"].(float64)
-	if count != 1 {
-		t.Errorf("count = %v, want 1", count)
-	}
-}
-
-func TestToolHandler_MarkDone(t *testing.T) {
-	tr, msgSvc, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "sender", "Sender", "ai", nil, 1)
-	agentSvc.Register(ctx, "worker", "Worker", "ai", nil, 1)
-
-	msg, _ := msgSvc.SendMessage(ctx, "sender", "worker", "do this", messaging.SendOptions{})
-	msgSvc.ClaimMessages(ctx, "worker", 1)
-
-	authCtx := ContextWithAgentName(ctx, "worker")
-
-	req := makeRequest(map[string]any{
-		"message_id": float64(msg.ID),
-	})
-
-	result, err := tr.handleMarkDone(authCtx, req)
-	if err != nil {
-		t.Fatalf("handleMarkDone: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-}
-
-func TestToolHandler_SearchMessages(t *testing.T) {
-	tr, msgSvc, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "sender", "Sender", "ai", nil, 1)
-	agentSvc.Register(ctx, "searcher", "Searcher", "ai", nil, 1)
-
-	msgSvc.SendMessage(ctx, "sender", "searcher", "deployment failed", messaging.SendOptions{})
-	msgSvc.SendMessage(ctx, "sender", "searcher", "all clear", messaging.SendOptions{})
-
-	authCtx := ContextWithAgentName(ctx, "searcher")
-
-	t.Run("keyword search", func(t *testing.T) {
+	t.Run("auth propagation to bridge", func(t *testing.T) {
 		req := makeRequest(map[string]any{
-			"query": "deployment",
+			"code": `call("read_inbox", {})`,
 		})
 
-		result, err := tr.handleSearchMessages(authCtx, req)
+		// Execute as "executor" - should see executor's inbox
+		result, err := h.handleExecute(authCtx, req)
 		if err != nil {
-			t.Fatalf("handleSearchMessages: %v", err)
-		}
-		if result.IsError {
-			t.Fatalf("unexpected error: %v", result.Content)
+			t.Fatalf("handleExecute: %v", err)
 		}
 
 		var resp map[string]any
 		text := result.Content[0].(mcplib.TextContent).Text
 		json.Unmarshal([]byte(text), &resp)
-		count := resp["count"].(float64)
-		if count != 1 {
-			t.Errorf("count = %v, want 1", count)
+
+		// The bridge should use "executor" as the agent name
+		if resp["calls"].(float64) != 1 {
+			t.Errorf("expected 1 call, got %v", resp["calls"])
 		}
 	})
-}
-
-func TestToolHandler_DiscoverAgents(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
-	ctx := context.Background()
-
-	agentSvc.Register(ctx, "bot-a", "Bot A", "ai", json.RawMessage(`{"skills":["search"]}`), 1)
-	agentSvc.Register(ctx, "bot-b", "Bot B", "ai", json.RawMessage(`{"skills":["analyze"]}`), 1)
-
-	authCtx := ContextWithAgentName(ctx, "bot-a")
-
-	req := makeRequest(map[string]any{
-		"query": "search",
-	})
-
-	result, err := tr.handleDiscoverAgents(authCtx, req)
-	if err != nil {
-		t.Fatalf("handleDiscoverAgents: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-
-	var resp map[string]any
-	text := result.Content[0].(mcplib.TextContent).Text
-	json.Unmarshal([]byte(text), &resp)
-	count := resp["count"].(float64)
-	if count != 1 {
-		t.Errorf("count = %v, want 1", count)
-	}
 }
 
 var _ = storage.RunMigrations

@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,14 +9,18 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/synapbus/synapbus/internal/actions"
 	"github.com/synapbus/synapbus/internal/agents"
 	"github.com/synapbus/synapbus/internal/apikeys"
 	"github.com/synapbus/synapbus/internal/console"
+	"github.com/synapbus/synapbus/internal/jsruntime"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/trace"
 )
 
-func TestNewMCPServerWithConsole(t *testing.T) {
+// newTestMCPServer creates a full MCPServer for testing.
+func newTestMCPServer(t *testing.T, con *console.Printer) (*MCPServer, *messaging.MessagingService, *agents.AgentService) {
+	t.Helper()
 	db := newTestDB(t)
 
 	tracer := trace.NewTracer(db)
@@ -29,9 +32,19 @@ func TestNewMCPServerWithConsole(t *testing.T) {
 	agentStore := agents.NewSQLiteAgentStore(db)
 	agentService := agents.NewAgentService(agentStore, tracer)
 
-	con := console.New()
+	jsPool := jsruntime.NewPool(2)
+	t.Cleanup(func() { jsPool.Close() })
 
-	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, con, nil, nil, nil)
+	actionRegistry := actions.NewRegistry()
+	actionIndex := actions.NewIndex(actionRegistry.List())
+
+	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, con, jsPool, actionRegistry, actionIndex, db)
+	return srv, msgService, agentService
+}
+
+func TestNewMCPServerWithConsole(t *testing.T) {
+	con := console.New()
+	srv, _, _ := newTestMCPServer(t, con)
 	if srv == nil {
 		t.Fatal("expected non-nil MCPServer")
 	}
@@ -44,19 +57,7 @@ func TestNewMCPServerWithConsole(t *testing.T) {
 }
 
 func TestNewMCPServerNilConsole(t *testing.T) {
-	db := newTestDB(t)
-
-	tracer := trace.NewTracer(db)
-	t.Cleanup(func() { tracer.Close() })
-
-	msgStore := messaging.NewSQLiteMessageStore(db)
-	msgService := messaging.NewMessagingService(msgStore, tracer)
-
-	agentStore := agents.NewSQLiteAgentStore(db)
-	agentService := agents.NewAgentService(agentStore, tracer)
-
-	// nil console should not panic
-	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, nil, nil, nil, nil)
+	srv, _, _ := newTestMCPServer(t, nil)
 	if srv == nil {
 		t.Fatal("expected non-nil MCPServer")
 	}
@@ -99,7 +100,7 @@ func TestConnectionManagerClientInfo(t *testing.T) {
 	}
 }
 
-// T007: Test MCP tool calls with valid API key — agent identity is correctly resolved.
+// T007: Test MCP tool calls with valid API key -- agent identity is correctly resolved.
 func TestMCPToolCall_WithValidAPIKey(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -125,8 +126,14 @@ func TestMCPToolCall_WithValidAPIKey(t *testing.T) {
 	// Also register a receiver
 	agentService.Register(ctx, "receiver", "Receiver", "ai", nil, 1)
 
+	jsPool := jsruntime.NewPool(2)
+	defer jsPool.Close()
+
+	actionRegistry := actions.NewRegistry()
+	actionIndex := actions.NewIndex(actionRegistry.List())
+
 	// Create MCP server
-	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, nil, nil, nil, nil)
+	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, nil, jsPool, actionRegistry, actionIndex, db)
 
 	// Mount with auth middleware, just like main.go does
 	mux := http.NewServeMux()
@@ -156,15 +163,10 @@ func TestMCPToolCall_WithValidAPIKey(t *testing.T) {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 
-	// Verify the agent was authenticated by checking the connection manager
-	// (the AfterInitialize hook would have captured the agent name)
-	// The init should have succeeded — verify by checking no 401 was returned
 	t.Log("MCP connection with valid API key succeeded")
 }
 
 // T008: Test MCP tool calls without auth return 401 when auth is required.
-// Note: With the current OptionalAuthMiddleware, unauthenticated requests pass through
-// (returning tool-level errors). This test verifies that an invalid API key is rejected.
 func TestMCPToolCall_InvalidAPIKeyReturns401(t *testing.T) {
 	db := newTestDB(t)
 
@@ -180,7 +182,13 @@ func TestMCPToolCall_InvalidAPIKeyReturns401(t *testing.T) {
 	apiKeyStore := apikeys.NewSQLiteStore(db)
 	apiKeyService := apikeys.NewService(apiKeyStore)
 
-	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, nil, nil, nil, nil)
+	jsPool := jsruntime.NewPool(2)
+	defer jsPool.Close()
+
+	actionRegistry := actions.NewRegistry()
+	actionIndex := actions.NewIndex(actionRegistry.List())
+
+	srv := NewMCPServer(msgService, agentService, nil, nil, nil, nil, nil, jsPool, actionRegistry, actionIndex, db)
 
 	mux := http.NewServeMux()
 	handler := agents.OptionalAuthMiddlewareWithAPIKeys(agentService, apiKeyService)(srv.Handler())
@@ -212,7 +220,7 @@ func TestMCPToolCall_InvalidAPIKeyReturns401(t *testing.T) {
 // T008 (continued): Test that unauthenticated MCP tool calls (no auth header at all)
 // are rejected at the tool handler level.
 func TestMCPToolCall_NoAuthReturnsToolError(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
+	h, _, agentSvc, _ := newTestHybridRegistrar(t)
 	ctx := context.Background()
 
 	// Register a receiver so the send would work if auth was present
@@ -224,7 +232,7 @@ func TestMCPToolCall_NoAuthReturnsToolError(t *testing.T) {
 		"body": "should fail",
 	})
 
-	result, err := tr.handleSendMessage(ctx, req)
+	result, err := h.handleSendMessage(ctx, req)
 	if err != nil {
 		t.Fatalf("handleSendMessage returned error: %v", err)
 	}
@@ -239,10 +247,8 @@ func TestMCPToolCall_NoAuthReturnsToolError(t *testing.T) {
 }
 
 // T009: Verify send_message enforces from_agent from the authenticated context.
-// The send_message tool does NOT expose a "from" parameter — the sender is always
-// derived from the authenticated agent identity in the context.
 func TestSendMessage_EnforcesAuthenticatedAgent(t *testing.T) {
-	tr, _, agentSvc, _ := newTestRegistrar(t)
+	h, _, agentSvc, _ := newTestHybridRegistrar(t)
 	ctx := context.Background()
 
 	agentSvc.Register(ctx, "real-sender", "Real Sender", "ai", nil, 1)
@@ -252,16 +258,13 @@ func TestSendMessage_EnforcesAuthenticatedAgent(t *testing.T) {
 	// Authenticate as "real-sender"
 	authCtx := ContextWithAgentName(ctx, "real-sender")
 
-	// Try to send a message — even if someone could supply a "from" field,
-	// the handler should use the authenticated agent name, not a user-supplied value.
+	// Send a message
 	req := makeRequest(map[string]any{
 		"to":   "receiver",
 		"body": "message from real sender",
-		// Note: there is no "from" parameter in the send_message tool definition,
-		// but even if extra args are passed, the handler ignores them.
 	})
 
-	result, err := tr.handleSendMessage(authCtx, req)
+	result, err := h.handleSendMessage(authCtx, req)
 	if err != nil {
 		t.Fatalf("handleSendMessage: %v", err)
 	}
@@ -269,16 +272,15 @@ func TestSendMessage_EnforcesAuthenticatedAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", result.Content)
 	}
 
-	// Verify the message was sent from "real-sender" by reading receiver's inbox
+	// Verify the message was sent from "real-sender" by reading receiver's inbox via execute
 	inboxCtx := ContextWithAgentName(ctx, "receiver")
-	inboxReq := makeRequest(map[string]any{})
-	inboxResult, _ := tr.handleReadInbox(inboxCtx, inboxReq)
+	inboxReq := makeRequest(map[string]any{
+		"code": `call("read_inbox", {})`,
+	})
+	inboxResult, _ := h.handleExecute(inboxCtx, inboxReq)
 
-	text := inboxResult.Content[0].(mcplib.TextContent).Text
-	var resp map[string]any
-	json.Unmarshal([]byte(text), &resp)
-
-	messages := resp["messages"].([]any)
+	resultData := parseCallResult(t, inboxResult)
+	messages := resultData["messages"].([]any)
 	if len(messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(messages))
 	}
@@ -286,6 +288,6 @@ func TestSendMessage_EnforcesAuthenticatedAgent(t *testing.T) {
 	msg := messages[0].(map[string]any)
 	fromAgent := msg["from_agent"].(string)
 	if fromAgent != "real-sender" {
-		t.Errorf("message from_agent = %q, want %q — send_message must enforce authenticated agent", fromAgent, "real-sender")
+		t.Errorf("message from_agent = %q, want %q -- send_message must enforce authenticated agent", fromAgent, "real-sender")
 	}
 }

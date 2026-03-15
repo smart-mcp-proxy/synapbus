@@ -11,15 +11,15 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/synapbus/synapbus/internal/actions"
 	"github.com/synapbus/synapbus/internal/agents"
 	"github.com/synapbus/synapbus/internal/attachments"
 	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/console"
-	"github.com/synapbus/synapbus/internal/k8s"
+	"github.com/synapbus/synapbus/internal/jsruntime"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/search"
 	"github.com/synapbus/synapbus/internal/trace"
-	"github.com/synapbus/synapbus/internal/webhooks"
 )
 
 // MCPServer wraps the mcp-go server with SynapBus services.
@@ -32,7 +32,7 @@ type MCPServer struct {
 	console      *console.Printer
 }
 
-// NewMCPServer creates and configures a new MCP server with all tools registered.
+// NewMCPServer creates and configures a new MCP server with 4 hybrid tools registered.
 func NewMCPServer(
 	msgService *messaging.MessagingService,
 	agentService *agents.AgentService,
@@ -41,8 +41,9 @@ func NewMCPServer(
 	attachmentService *attachments.Service,
 	searchService *search.Service,
 	consolePrinter *console.Printer,
-	webhookService *webhooks.WebhookService,
-	k8sService *k8s.K8sService,
+	jsPool *jsruntime.Pool,
+	actionRegistry *actions.Registry,
+	actionIndex *actions.Index,
 	db *sql.DB,
 ) *MCPServer {
 	logger := slog.Default().With("component", "mcp-server")
@@ -143,42 +144,20 @@ func NewMCPServer(
 		server.WithHooks(hooks),
 	)
 
-	// Register all tools
-	registrar := NewToolRegistrar(msgService, agentService)
-	if searchService != nil {
-		registrar.SetSearchService(searchService)
-	}
-	if channelService != nil {
-		registrar.SetChannelService(channelService)
-	}
-	if db != nil {
-		registrar.SetDB(db)
-	}
-	registrar.RegisterAll(mcpSrv)
-
-	// Register channel tools
-	if channelService != nil {
-		channelRegistrar := NewChannelToolRegistrar(channelService, msgService)
-		channelRegistrar.RegisterAll(mcpSrv)
-	}
-
-	// Register swarm tools
-	if swarmService != nil && channelService != nil {
-		swarmRegistrar := NewSwarmToolRegistrar(swarmService, channelService)
-		swarmRegistrar.RegisterAll(mcpSrv)
-	}
-
-	// Register attachment tools
-	if attachmentService != nil {
-		attachmentRegistrar := NewAttachmentToolRegistrar(attachmentService)
-		attachmentRegistrar.RegisterAll(mcpSrv)
-	}
-
-	// Register webhook and K8s handler tools
-	if webhookService != nil || k8sService != nil {
-		webhookRegistrar := NewWebhookToolRegistrar(webhookService, k8sService)
-		webhookRegistrar.RegisterAll(mcpSrv)
-	}
+	// Register the 4 hybrid tools
+	hybridRegistrar := NewHybridToolRegistrar(
+		msgService,
+		agentService,
+		channelService,
+		swarmService,
+		attachmentService,
+		searchService,
+		jsPool,
+		actionRegistry,
+		actionIndex,
+		db,
+	)
+	hybridRegistrar.RegisterAllOnServer(mcpSrv)
 
 	// Create Streamable HTTP transport with context func for auth propagation
 	httpServer := server.NewStreamableHTTPServer(mcpSrv,
@@ -204,7 +183,7 @@ func NewMCPServer(
 		console:      consolePrinter,
 	}
 
-	logger.Info("MCP server initialized (streamable HTTP transport)")
+	logger.Info("MCP server initialized (4 hybrid tools, streamable HTTP transport)")
 	return s
 }
 
