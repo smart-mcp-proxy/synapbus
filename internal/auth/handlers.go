@@ -816,13 +816,28 @@ const authorizeTemplateHTML = `<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.8">
-      <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="#36c5f0"/>
-      <path d="M2 17l10 5 10-5" stroke="#7c3aed"/>
-      <path d="M2 12l10 5 10-5" stroke="url(#g)"/>
-      <defs><linearGradient id="g" x1="2" y1="12" x2="22" y2="17" gradientUnits="userSpaceOnUse">
-        <stop stop-color="#36c5f0"/><stop offset="1" stop-color="#7c3aed"/>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+      <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#06b6d4"/>
       </linearGradient></defs>
+      <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+      <g transform="translate(4,4)">
+        <circle cx="12" cy="5" r="1.8" fill="#c4b5fd"/>
+        <circle cx="6" cy="10" r="1.5" fill="#a78bfa"/>
+        <circle cx="18" cy="9" r="1.5" fill="#c4b5fd"/>
+        <circle cx="12" cy="13" r="2" fill="#67e8f9"/>
+        <circle cx="5" cy="17" r="1.5" fill="#a78bfa"/>
+        <circle cx="19" cy="17" r="1.3" fill="#a78bfa"/>
+        <circle cx="11" cy="20" r="1.3" fill="#c4b5fd"/>
+        <line x1="12" y1="5" x2="6" y2="10" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="12" y1="5" x2="18" y2="9" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="6" y1="10" x2="12" y2="13" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="18" y1="9" x2="12" y2="13" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="12" y1="13" x2="5" y2="17" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="12" y1="13" x2="19" y2="17" stroke="white" stroke-width="0.5" opacity="0.5"/>
+        <line x1="5" y1="17" x2="11" y2="20" stroke="white" stroke-width="0.5" opacity="0.3"/>
+        <line x1="6" y1="10" x2="5" y2="17" stroke="white" stroke-width="0.5" opacity="0.3"/>
+      </g>
     </svg>
     <h1>SynapBus</h1>
     <p>Agent Authorization</p>
