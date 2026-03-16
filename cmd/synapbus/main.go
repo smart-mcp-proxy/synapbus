@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
+	"github.com/synapbus/synapbus/internal/a2a"
 	"github.com/synapbus/synapbus/internal/actions"
 	"github.com/synapbus/synapbus/internal/admin"
 	"github.com/synapbus/synapbus/internal/agents"
@@ -536,6 +537,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	r.Group(func(r chi.Router) {
 		r.Use(agents.RequiredAuthMiddlewareWithOAuth(agentService, apiKeyService, oauthProvider))
 		r.Mount("/mcp", mcpSrv.Handler())
+	})
+
+	// A2A Gateway (requires auth: API key, managed key, or OAuth bearer)
+	a2aTaskStore := a2a.NewA2ATaskStore(db.DB)
+	a2aGateway := a2a.NewGateway(a2aTaskStore, msgService, agentService)
+	r.Group(func(r chi.Router) {
+		r.Use(agents.RequiredAuthMiddlewareWithOAuth(agentService, apiKeyService, oauthProvider))
+		r.Post("/a2a", a2aGateway.HandleJSONRPC)
 	})
 
 	// Create SSE hub and broadcaster for real-time events
