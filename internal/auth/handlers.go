@@ -295,13 +295,21 @@ func (h *Handlers) HandleOAuthMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	baseURL := h.config.IssuerURL
-	if baseURL == "" {
-		// Fall back to request Host header
+	if baseURL == "" || baseURL == "auto" {
+		// Derive from request headers (supports reverse proxies and tunnels)
 		scheme := "http"
 		if r.TLS != nil {
 			scheme = "https"
 		}
-		baseURL = fmt.Sprintf("%s://%s", scheme, r.Host)
+		// Cloudflare, nginx, and other proxies set these headers
+		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+			scheme = proto
+		}
+		host := r.Host
+		if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+			host = fwdHost
+		}
+		baseURL = fmt.Sprintf("%s://%s", scheme, host)
 	}
 
 	metadata := map[string]any{
