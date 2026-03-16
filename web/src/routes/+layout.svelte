@@ -13,6 +13,7 @@
 	let sseClient: SSEClient | null = $state(null);
 	let sseUnsubscribe: (() => void) | null = $state(null);
 	let initialized = $state(false);
+	let sidebarOpen = $state(false);
 
 	let isLoginPage = $derived($page.url.pathname === '/login');
 
@@ -79,9 +80,9 @@
 	{@render children()}
 {:else if $user}
 	<div class="h-screen flex overflow-hidden bg-bg-primary">
-		<Sidebar />
-		<div class="ml-[260px] flex-1 flex flex-col min-w-0">
-			<Header />
+		<Sidebar open={sidebarOpen} onclose={() => (sidebarOpen = false)} />
+		<div class="md:ml-[260px] flex-1 flex flex-col min-w-0">
+			<Header onMenuToggle={() => (sidebarOpen = !sidebarOpen)} />
 			<main class="flex-1 overflow-y-auto flex flex-col">
 				{@render children()}
 			</main>

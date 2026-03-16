@@ -5,6 +5,8 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { channels as channelsApi, agents as agentsApi, deadLetters as deadLettersApi } from '$lib/api/client';
 
+	let { open = false, onclose = () => {} }: { open?: boolean; onclose?: () => void } = $props();
+
 	let channelList = $state<any[]>([]);
 	let agentList = $state<any[]>([]);
 	let deadLetterCount = $state(0);
@@ -36,6 +38,10 @@
 		}
 	}
 
+	function handleNavClick() {
+		onclose();
+	}
+
 	function isActive(href: string): boolean {
 		return $page.url.pathname === href || ($page.url.pathname.startsWith(href) && href !== '/');
 	}
@@ -55,7 +61,17 @@
 	];
 </script>
 
-<aside class="fixed top-0 left-0 z-40 h-screen w-[260px] bg-bg-secondary border-r border-border flex flex-col select-none">
+<!-- Mobile overlay backdrop -->
+{#if open}
+	<button
+		class="fixed inset-0 z-30 bg-black/50 md:hidden"
+		onclick={onclose}
+		aria-label="Close sidebar"
+		tabindex="-1"
+	></button>
+{/if}
+
+<aside class="fixed top-0 left-0 z-40 h-screen w-[260px] bg-bg-secondary border-r border-border flex flex-col select-none transition-transform duration-200 {open ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0">
 	<!-- Workspace header -->
 	<div class="flex items-center gap-2.5 h-14 px-4 border-b border-border flex-shrink-0">
 		<div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent-purple to-[#06b6d4] flex items-center justify-center">
@@ -97,6 +113,7 @@
 		<a
 			href="/"
 			class="sidebar-item mb-1 {isActive('/') && $page.url.pathname === '/' ? 'sidebar-item-active' : ''}"
+			onclick={handleNavClick}
 		>
 			<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
@@ -108,6 +125,7 @@
 		<a
 			href="/conversations"
 			class="sidebar-item mb-3 {isActive('/conversations') ? 'sidebar-item-active' : ''}"
+			onclick={handleNavClick}
 		>
 			<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -148,6 +166,7 @@
 							<a
 								href="/channels/{ch.name}"
 								class="sidebar-item {isActive('/channels/' + ch.name) ? 'sidebar-item-active' : ''}"
+								onclick={handleNavClick}
 							>
 								{#if ch.name.startsWith('my-agents-')}
 									<svg class="w-4 h-4 flex-shrink-0 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -196,6 +215,7 @@
 							<a
 								href="/dm/{agent.name}"
 								class="sidebar-item {isActive('/dm/' + agent.name) ? 'sidebar-item-active' : ''}"
+								onclick={handleNavClick}
 							>
 								<span class="relative flex-shrink-0">
 									<span class="w-5 h-5 rounded-full bg-bg-tertiary flex items-center justify-center text-[10px] font-bold text-text-secondary">
@@ -238,6 +258,7 @@
 						<a
 							href={link.href}
 							class="sidebar-item {isActive(link.href) ? 'sidebar-item-active' : ''}"
+							onclick={handleNavClick}
 						>
 							{#if link.label === 'Agents'}
 								<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -255,6 +276,7 @@
 				<a
 					href="/dead-letters"
 					class="sidebar-item {isActive('/dead-letters') && $page.url.pathname === '/dead-letters' ? 'sidebar-item-active' : ''}"
+					onclick={handleNavClick}
 				>
 					<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M21.75 9v.906a2.25 2.25 0 01-1.183 1.981l-6.478 3.488M2.25 9v.906a2.25 2.25 0 001.183 1.981l6.478 3.488m8.839 2.51l-4.66-2.51m0 0l-1.023-.55a2.25 2.25 0 00-2.134 0l-1.022.55m0 0l-4.661 2.51m16.5 1.615a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V8.844a2.25 2.25 0 011.183-1.98l7.5-4.04a2.25 2.25 0 012.134 0l7.5 4.04a2.25 2.25 0 011.183 1.98V19.5z" />
@@ -267,6 +289,7 @@
 				<a
 					href="/dead-letters/webhooks"
 					class="sidebar-item {isActive('/dead-letters/webhooks') ? 'sidebar-item-active' : ''}"
+					onclick={handleNavClick}
 				>
 					<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
