@@ -113,10 +113,8 @@
 				const subJson = sub.toJSON();
 				await pushApi.subscribe({
 					endpoint: sub.endpoint,
-					keys: {
-						p256dh: subJson.keys?.p256dh || '',
-						auth: subJson.keys?.auth || ''
-					}
+					key_p256dh: subJson.keys?.p256dh || '',
+					key_auth: subJson.keys?.auth || ''
 				});
 				pushEnabled = true;
 			}

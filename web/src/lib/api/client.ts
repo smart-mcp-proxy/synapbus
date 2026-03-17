@@ -219,7 +219,7 @@ export const version = {
 
 // Push notifications
 export const push = {
-	subscribe: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+	subscribe: (subscription: { endpoint: string; key_p256dh: string; key_auth: string }) =>
 		request<{ id: number; message: string }>('POST', '/api/push/subscribe', subscription),
 	unsubscribe: (endpoint: string) =>
 		request<{ message: string }>('DELETE', '/api/push/subscribe', { endpoint }),
