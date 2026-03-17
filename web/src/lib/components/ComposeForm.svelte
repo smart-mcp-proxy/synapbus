@@ -55,20 +55,29 @@
 
 	function autoResize() {
 		if (!textareaEl) return;
-		textareaEl.style.height = 'auto';
+		// Reset to measure true scrollHeight
+		textareaEl.style.height = '80px';
 		const maxHeight = 240; // ~12 lines
 		const scrollHeight = textareaEl.scrollHeight;
 		if (scrollHeight > maxHeight) {
 			textareaEl.style.height = maxHeight + 'px';
 			textareaEl.style.overflowY = 'auto';
+			textareaEl.classList.remove('overflow-hidden');
 		} else {
-			textareaEl.style.height = scrollHeight + 'px';
+			textareaEl.style.height = Math.max(80, scrollHeight) + 'px';
 			textareaEl.style.overflowY = 'hidden';
+			textareaEl.classList.add('overflow-hidden');
 		}
 	}
 
+	function isMobile(): boolean {
+		return typeof window !== 'undefined' && window.innerWidth < 768;
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
+		// On mobile, Enter inserts newline (send via button only)
+		// On desktop, Enter sends, Shift+Enter inserts newline
+		if (e.key === 'Enter' && !e.shiftKey && !isMobile()) {
 			e.preventDefault();
 			handleSubmit();
 		}
@@ -161,9 +170,9 @@
 	<!-- Message body -->
 	<textarea
 		bind:this={textareaEl}
-		placeholder="Write a message..."
-		class="w-full px-4 py-3 bg-transparent text-sm text-text-primary placeholder-text-secondary resize-none outline-none"
-		style="min-height: 72px; max-height: 240px;"
+		placeholder="Write a message... {isMobile() ? '' : '(Shift+Enter for new line)'}"
+		class="w-full px-4 py-3 bg-transparent text-sm text-text-primary placeholder-text-secondary resize-none outline-none overflow-hidden"
+		style="min-height: 80px; max-height: 240px;"
 		bind:value={body}
 		rows="3"
 		onkeydown={handleKeydown}

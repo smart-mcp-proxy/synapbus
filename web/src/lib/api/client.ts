@@ -223,7 +223,7 @@ export const push = {
 		request<{ id: number; message: string }>('POST', '/api/push/subscribe', subscription),
 	unsubscribe: (endpoint: string) =>
 		request<{ message: string }>('DELETE', '/api/push/subscribe', { endpoint }),
-	vapidKey: () => request<{ public_key: string }>('GET', '/api/push/vapid-key')
+	vapidKey: () => request<{ vapid_public_key: string }>('GET', '/api/push/vapid-key')
 };
 
 // User profile

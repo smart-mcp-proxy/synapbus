@@ -91,7 +91,7 @@
 	});
 </script>
 
-<div class="p-5 max-w-6xl">
+<div class="p-3 md:p-5 max-w-6xl w-full">
 	<!-- Top bar -->
 	<div class="flex items-center justify-between mb-5">
 		<div>
@@ -120,22 +120,22 @@
 	{/if}
 
 	<!-- Summary Cards -->
-	<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-		<div class="card p-4">
-			<p class="text-xs text-text-secondary mb-1">Total Messages</p>
-			<p class="text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_messages}</p>
+	<div class="grid grid-cols-4 gap-2 md:gap-3 mb-5">
+		<div class="card p-3 md:p-4">
+			<p class="text-[10px] md:text-xs text-text-secondary mb-1">Messages</p>
+			<p class="text-lg md:text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_messages}</p>
 		</div>
-		<div class="card p-4">
-			<p class="text-xs text-text-secondary mb-1">Agents</p>
-			<p class="text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_agents}</p>
+		<div class="card p-3 md:p-4">
+			<p class="text-[10px] md:text-xs text-text-secondary mb-1">Agents</p>
+			<p class="text-lg md:text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_agents}</p>
 		</div>
-		<div class="card p-4">
-			<p class="text-xs text-text-secondary mb-1">Channels</p>
-			<p class="text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_channels}</p>
+		<div class="card p-3 md:p-4">
+			<p class="text-[10px] md:text-xs text-text-secondary mb-1">Channels</p>
+			<p class="text-lg md:text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : summary.total_channels}</p>
 		</div>
-		<div class="card p-4">
-			<p class="text-xs text-text-secondary mb-1">Conversations</p>
-			<p class="text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : recentConversations.length}</p>
+		<div class="card p-3 md:p-4">
+			<p class="text-[10px] md:text-xs text-text-secondary mb-1">Convos</p>
+			<p class="text-lg md:text-2xl font-bold text-text-primary font-display">{loadingData ? '-' : recentConversations.length}</p>
 		</div>
 	</div>
 

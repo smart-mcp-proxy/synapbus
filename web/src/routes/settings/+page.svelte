@@ -108,7 +108,7 @@
 				const reg = await navigator.serviceWorker.ready;
 				const sub = await reg.pushManager.subscribe({
 					userVisibleOnly: true,
-					applicationServerKey: urlBase64ToUint8Array(keyRes.public_key)
+					applicationServerKey: urlBase64ToUint8Array(keyRes.vapid_public_key)
 				});
 				const subJson = sub.toJSON();
 				await pushApi.subscribe({
