@@ -1,0 +1,11 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.synapbus/synapbus",
+  "description": "MCP-native agent-to-agent messaging hub with channels, DMs, and semantic search",
+  "repository": {
+    "url": "https://github.com/synapbus/synapbus",
+    "source": "github"
+  },
+  "version": "0.7.0",
+  "packages": []
+}
