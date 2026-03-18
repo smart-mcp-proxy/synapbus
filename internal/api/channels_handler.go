@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,10 +16,16 @@ import (
 
 // ChannelsHandler handles REST API requests for channels.
 type ChannelsHandler struct {
-	channelService *channels.Service
-	agentService   *agents.AgentService
-	msgService     *messaging.MessagingService
-	logger         *slog.Logger
+	channelService  *channels.Service
+	agentService    *agents.AgentService
+	msgService      *messaging.MessagingService
+	reactionService ChannelReactionService
+	logger          *slog.Logger
+}
+
+// ChannelReactionService is the subset of reactions.Service needed by ChannelsHandler.
+type ChannelReactionService interface {
+	ListByState(ctx context.Context, channelID int64, state string) ([]int64, error)
 }
 
 // NewChannelsHandler creates a new channels handler.
@@ -29,6 +36,11 @@ func NewChannelsHandler(channelService *channels.Service, agentService *agents.A
 		msgService:     msgService,
 		logger:         slog.Default().With("component", "api.channels"),
 	}
+}
+
+// SetReactionService sets the reaction service for workflow state queries.
+func (h *ChannelsHandler) SetReactionService(svc ChannelReactionService) {
+	h.reactionService = svc
 }
 
 // ListChannels handles GET /api/channels.
@@ -297,4 +309,113 @@ func (h *ChannelsHandler) LeaveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
+}
+
+// UpdateSettings handles PUT /api/channels/{name}/settings.
+func (h *ChannelsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	_, ok := OwnerIDFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, errorBody("unauthorized", "Authentication required"))
+		return
+	}
+
+	name := chi.URLParam(r, "name")
+	ch, err := h.channelService.GetChannelByName(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("not_found", "Channel not found"))
+		return
+	}
+
+	var req struct {
+		AutoApprove            *bool   `json:"auto_approve"`
+		StalemateRemindAfter   *string `json:"stalemate_remind_after"`
+		StalemateEscalateAfter *string `json:"stalemate_escalate_after"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "Invalid JSON body"))
+		return
+	}
+
+	settings := channels.ChannelSettings{
+		AutoApprove:            ch.AutoApprove,
+		StalemateRemindAfter:   ch.StalemateRemindAfter,
+		StalemateEscalateAfter: ch.StalemateEscalateAfter,
+	}
+
+	if req.AutoApprove != nil {
+		settings.AutoApprove = *req.AutoApprove
+	}
+	if req.StalemateRemindAfter != nil {
+		settings.StalemateRemindAfter = *req.StalemateRemindAfter
+	}
+	if req.StalemateEscalateAfter != nil {
+		settings.StalemateEscalateAfter = *req.StalemateEscalateAfter
+	}
+
+	updated, err := h.channelService.UpdateChannelSettings(r.Context(), ch.ID, settings)
+	if err != nil {
+		h.logger.Error("update channel settings failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorBody("server_error", "Failed to update channel settings"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"channel": updated})
+}
+
+// ListByState handles GET /api/channels/{name}/messages/by-state?state=X.
+func (h *ChannelsHandler) ListByState(w http.ResponseWriter, r *http.Request) {
+	_, ok := OwnerIDFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, errorBody("unauthorized", "Authentication required"))
+		return
+	}
+
+	if h.reactionService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("unavailable", "Reactions service not configured"))
+		return
+	}
+
+	name := chi.URLParam(r, "name")
+	ch, err := h.channelService.GetChannelByName(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("not_found", "Channel not found"))
+		return
+	}
+
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("missing_state", "Query parameter 'state' is required"))
+		return
+	}
+
+	ids, err := h.reactionService.ListByState(r.Context(), ch.ID, state)
+	if err != nil {
+		h.logger.Error("list by state failed", "error", err)
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_state", err.Error()))
+		return
+	}
+
+	// Load messages by IDs
+	var messages []*messaging.Message
+	for _, id := range ids {
+		msg, err := h.msgService.GetMessageByID(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+
+	if messages == nil {
+		messages = []*messaging.Message{}
+	}
+
+	// Enrich messages with reactions, reply counts, attachments
+	h.msgService.EnrichMessages(r.Context(), messages)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": messages,
+		"state":    state,
+		"total":    len(messages),
+	})
 }

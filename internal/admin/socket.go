@@ -169,6 +169,8 @@ func (s *AdminServer) dispatch(req Request) Response {
 		return s.handleChannelsCreate(ctx, req.Args)
 	case "channels.join":
 		return s.handleChannelsJoin(ctx, req.Args)
+	case "channels.update_settings":
+		return s.handleChannelsUpdateSettings(ctx, req.Args)
 
 	// --- conversations ---
 	case "conversations.list":
@@ -992,6 +994,64 @@ func (s *AdminServer) handleChannelsJoin(ctx context.Context, args json.RawMessa
 		"channel": p.Channel,
 		"agent":   p.Agent,
 		"status":  status,
+	}}
+}
+
+func (s *AdminServer) handleChannelsUpdateSettings(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		Name                   string `json:"name"`
+		AutoApprove            *bool  `json:"auto_approve,omitempty"`
+		StalemateRemindAfter   string `json:"stalemate_remind_after,omitempty"`
+		StalemateEscalateAfter string `json:"stalemate_escalate_after,omitempty"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.Name == "" {
+		return Response{OK: false, Error: "name is required"}
+	}
+
+	// Build the SET clause dynamically based on provided fields
+	var setClauses []string
+	var setArgs []interface{}
+
+	if p.AutoApprove != nil {
+		autoApproveVal := 0
+		if *p.AutoApprove {
+			autoApproveVal = 1
+		}
+		setClauses = append(setClauses, "auto_approve = ?")
+		setArgs = append(setArgs, autoApproveVal)
+	}
+	if p.StalemateRemindAfter != "" {
+		setClauses = append(setClauses, "stalemate_remind_after = ?")
+		setArgs = append(setArgs, p.StalemateRemindAfter)
+	}
+	if p.StalemateEscalateAfter != "" {
+		setClauses = append(setClauses, "stalemate_escalate_after = ?")
+		setArgs = append(setArgs, p.StalemateEscalateAfter)
+	}
+
+	if len(setClauses) == 0 {
+		return Response{OK: false, Error: "at least one setting must be provided (auto_approve, stalemate_remind_after, stalemate_escalate_after)"}
+	}
+
+	query := fmt.Sprintf("UPDATE channels SET %s WHERE LOWER(name) = LOWER(?)", strings.Join(setClauses, ", "))
+	setArgs = append(setArgs, p.Name)
+
+	result, err := s.db.ExecContext(ctx, query, setArgs...)
+	if err != nil {
+		return Response{OK: false, Error: "update channel settings: " + err.Error()}
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return Response{OK: false, Error: fmt.Sprintf("channel not found: %s", p.Name)}
+	}
+
+	return Response{OK: true, Data: map[string]interface{}{
+		"channel": p.Name,
+		"updated": true,
 	}}
 }
 

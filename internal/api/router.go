@@ -13,6 +13,7 @@ import (
 	"github.com/synapbus/synapbus/internal/k8s"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/push"
+	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/trace"
 	"github.com/synapbus/synapbus/internal/webhooks"
 )
@@ -32,6 +33,7 @@ type RouterConfig struct {
 	WebhookStore      webhooks.WebhookStore
 	K8sService        *k8s.K8sService
 	K8sStore          k8s.K8sStore
+	ReactionService   *reactions.Service
 	PushService       *push.Service
 	SSEHub            *SSEHub
 	Broadcaster       *SSEBroadcaster
@@ -142,9 +144,24 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 			})
 		}
 
+		// Reactions
+		if cfg.ReactionService != nil {
+			reactionsHandler := NewReactionsHandler(cfg.ReactionService, cfg.MsgService, cfg.AgentService)
+			r.Group(func(r chi.Router) {
+				r.Use(authMiddleware)
+
+				r.Post("/api/messages/{id}/reactions", reactionsHandler.Toggle)
+				r.Get("/api/messages/{id}/reactions", reactionsHandler.GetReactions)
+				r.Delete("/api/messages/{id}/reactions/{reaction}", reactionsHandler.Remove)
+			})
+		}
+
 		// Channels
 		if cfg.ChannelService != nil {
 			channelsHandler := NewChannelsHandler(cfg.ChannelService, cfg.AgentService, cfg.MsgService)
+			if cfg.ReactionService != nil {
+				channelsHandler.SetReactionService(cfg.ReactionService)
+			}
 			r.Group(func(r chi.Router) {
 				r.Use(authMiddleware)
 
@@ -152,6 +169,8 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 				r.Get("/api/channels/{name}", channelsHandler.GetChannel)
 				r.Post("/api/channels", channelsHandler.CreateChannel)
 				r.Get("/api/channels/{name}/messages", channelsHandler.ChannelMessages)
+				r.Get("/api/channels/{name}/messages/by-state", channelsHandler.ListByState)
+				r.Put("/api/channels/{name}/settings", channelsHandler.UpdateSettings)
 				r.Post("/api/channels/{name}/join", channelsHandler.JoinChannel)
 				r.Post("/api/channels/{name}/leave", channelsHandler.LeaveChannel)
 			})

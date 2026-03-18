@@ -18,6 +18,7 @@ import (
 	"github.com/synapbus/synapbus/internal/console"
 	"github.com/synapbus/synapbus/internal/jsruntime"
 	"github.com/synapbus/synapbus/internal/messaging"
+	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/search"
 	"github.com/synapbus/synapbus/internal/trace"
 )
@@ -40,6 +41,7 @@ func NewMCPServer(
 	swarmService *channels.SwarmService,
 	attachmentService *attachments.Service,
 	searchService *search.Service,
+	reactionService *reactions.Service,
 	consolePrinter *console.Printer,
 	jsPool *jsruntime.Pool,
 	actionRegistry *actions.Registry,
@@ -153,6 +155,7 @@ func NewMCPServer(
 		swarmService,
 		attachmentService,
 		searchService,
+		reactionService,
 		jsPool,
 		actionRegistry,
 		actionIndex,

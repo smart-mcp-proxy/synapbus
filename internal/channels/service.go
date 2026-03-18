@@ -459,6 +459,31 @@ func (s *Service) UpdateChannel(ctx context.Context, channelID int64, req Update
 	return ch, nil
 }
 
+// UpdateChannelSettings updates the workflow-related settings for a channel.
+func (s *Service) UpdateChannelSettings(ctx context.Context, channelID int64, settings ChannelSettings) (*Channel, error) {
+	store, ok := s.store.(*SQLiteChannelStore)
+	if !ok {
+		return nil, fmt.Errorf("channel store does not support settings update")
+	}
+
+	if err := store.UpdateChannelSettings(ctx, channelID, settings); err != nil {
+		return nil, err
+	}
+
+	// Reload channel to return updated state
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info("channel settings updated",
+		"channel_id", channelID,
+		"auto_approve", settings.AutoApprove,
+	)
+
+	return ch, nil
+}
+
 // BroadcastMessage sends a message to a channel. It creates a single channel
 // message (visible in the channel timeline via GetChannelMessages) and also
 // delivers individual DM notifications to each member's inbox.

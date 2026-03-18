@@ -250,4 +250,16 @@ export const attachments = {
 	}
 };
 
+// Reactions
+export const reactions = {
+	toggle: (messageId: number, reaction: string, metadata?: Record<string, any>) =>
+		request<{ action: string; reaction: any; reactions: any[]; workflow_state: string }>(
+			'POST', `/api/messages/${messageId}/reactions`, { reaction, metadata }
+		),
+	get: (messageId: number) =>
+		request<{ reactions: any[]; workflow_state: string }>(
+			'GET', `/api/messages/${messageId}/reactions`
+		)
+};
+
 export { ApiError };

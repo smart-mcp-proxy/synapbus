@@ -41,6 +41,7 @@ import (
 	mcpserver "github.com/synapbus/synapbus/internal/mcp"
 	"github.com/synapbus/synapbus/internal/messaging"
 	prommetrics "github.com/synapbus/synapbus/internal/metrics"
+	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/search"
 	"github.com/synapbus/synapbus/internal/search/embedding"
 	"github.com/synapbus/synapbus/internal/storage"
@@ -284,6 +285,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	msgService.SetAttachmentLinker(&attachmentLinkerAdapter{svc: attachmentService})
 	slog.Info("attachment service initialized", "dir", attachmentsDir)
 
+	// Create reaction service
+	reactionStore := reactions.NewSQLiteStore(db.DB)
+	reactionService := reactions.NewService(reactionStore, slog.Default())
+	msgService.SetReactionEnricher(&reactionEnricherAdapter{svc: reactionService})
+	slog.Info("reaction service initialized")
+
 	// Initialize auth subsystem
 	authSecret := make([]byte, 32)
 	if _, err := rand.Read(authSecret); err != nil {
@@ -466,7 +473,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	actionIndex := actions.NewIndex(actionRegistry.List())
 
 	// Create MCP server (4 hybrid tools: my_status, send_message, search, execute)
-	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, con, jsPool, actionRegistry, actionIndex, db.DB)
+	mcpSrv := mcpserver.NewMCPServer(msgService, agentService, channelService, swarmService, attachmentService, searchService, reactionService, con, jsPool, actionRegistry, actionIndex, db.DB)
 	startTime := time.Now()
 
 	// Start task expiry worker
@@ -620,6 +627,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ChannelService:    channelService,
 		APIKeyService:     apiKeyService,
 		DeadLetterStore:   deadLetterStore,
+		ReactionService:   reactionService,
 		SSEHub:            sseHub,
 		Broadcaster:       sseBroadcaster,
 		SessionMiddleware: sessionMiddleware,
@@ -862,6 +870,32 @@ func (a *attachmentLinkerAdapter) GetByMessageID(ctx context.Context, messageID 
 		}
 	}
 	return results, nil
+}
+
+// reactionEnricherAdapter adapts reactions.Service to messaging.ReactionEnricher.
+type reactionEnricherAdapter struct {
+	svc *reactions.Service
+}
+
+func (a *reactionEnricherAdapter) GetByMessageIDs(ctx context.Context, messageIDs []int64) (map[int64][]messaging.ReactionInfo, error) {
+	rxMap, err := a.svc.GetReactionsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64][]messaging.ReactionInfo, len(rxMap))
+	for msgID, rxs := range rxMap {
+		infos := make([]messaging.ReactionInfo, len(rxs))
+		for i, rx := range rxs {
+			infos[i] = messaging.ReactionInfo{
+				AgentName: rx.AgentName,
+				Reaction:  rx.Reaction,
+				Metadata:  rx.Metadata,
+				CreatedAt: rx.CreatedAt,
+			}
+		}
+		result[msgID] = infos
+	}
+	return result, nil
 }
 
 // agentListerAdapter adapts agents.AgentService to auth.AgentLister.

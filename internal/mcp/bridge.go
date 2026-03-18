@@ -14,6 +14,7 @@ import (
 	"github.com/synapbus/synapbus/internal/attachments"
 	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/messaging"
+	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/search"
 )
 
@@ -26,6 +27,7 @@ type ServiceBridge struct {
 	swarmService      *channels.SwarmService
 	attachmentService *attachments.Service
 	searchService     *search.Service
+	reactionService   *reactions.Service
 	agentName         string
 }
 
@@ -37,6 +39,7 @@ func NewServiceBridge(
 	swarmService *channels.SwarmService,
 	attachmentService *attachments.Service,
 	searchService *search.Service,
+	reactionService *reactions.Service,
 	agentName string,
 ) *ServiceBridge {
 	return &ServiceBridge{
@@ -46,6 +49,7 @@ func NewServiceBridge(
 		swarmService:      swarmService,
 		attachmentService: attachmentService,
 		searchService:     searchService,
+		reactionService:   reactionService,
 		agentName:         agentName,
 	}
 }
@@ -102,6 +106,16 @@ func (b *ServiceBridge) Call(ctx context.Context, actionName string, args map[st
 		return b.callUploadAttachment(ctx, args)
 	case "download_attachment":
 		return b.callDownloadAttachment(ctx, args)
+
+	// --- Reactions ---
+	case "react":
+		return b.callReact(ctx, args)
+	case "unreact":
+		return b.callUnreact(ctx, args)
+	case "get_reactions":
+		return b.callGetReactions(ctx, args)
+	case "list_by_state":
+		return b.callListByState(ctx, args)
 
 	// --- DM send (also accessible via bridge for execute tool) ---
 	case "send_message":
@@ -917,6 +931,136 @@ func (b *ServiceBridge) callDownloadAttachment(ctx context.Context, args map[str
 		"original_filename": dlResult.Filename,
 		"mime_type":         dlResult.MIMEType,
 		"size":              dlResult.Size,
+	}, nil
+}
+
+// --- Reaction implementations ---
+
+func (b *ServiceBridge) callReact(ctx context.Context, args map[string]any) (any, error) {
+	if b.reactionService == nil {
+		return nil, fmt.Errorf("reaction service not available")
+	}
+
+	messageID := getInt(args, "message_id", 0)
+	if messageID == 0 {
+		return nil, fmt.Errorf("'message_id' parameter is required")
+	}
+
+	reaction := getString(args, "reaction", "")
+	if reaction == "" {
+		return nil, fmt.Errorf("'reaction' parameter is required")
+	}
+
+	var metadata json.RawMessage
+	if metaStr := getString(args, "metadata", ""); metaStr != "" {
+		if !json.Valid([]byte(metaStr)) {
+			return nil, fmt.Errorf("metadata must be valid JSON")
+		}
+		metadata = json.RawMessage(metaStr)
+	}
+
+	result, err := b.reactionService.Toggle(ctx, int64(messageID), b.agentName, reaction, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := map[string]any{
+		"action":     result.Action,
+		"message_id": messageID,
+		"reaction":   reaction,
+	}
+	if result.Reaction != nil {
+		resp["id"] = result.Reaction.ID
+		resp["created_at"] = result.Reaction.CreatedAt
+	}
+	return resp, nil
+}
+
+func (b *ServiceBridge) callUnreact(ctx context.Context, args map[string]any) (any, error) {
+	if b.reactionService == nil {
+		return nil, fmt.Errorf("reaction service not available")
+	}
+
+	messageID := getInt(args, "message_id", 0)
+	if messageID == 0 {
+		return nil, fmt.Errorf("'message_id' parameter is required")
+	}
+
+	reaction := getString(args, "reaction", "")
+	if reaction == "" {
+		return nil, fmt.Errorf("'reaction' parameter is required")
+	}
+
+	if err := b.reactionService.Remove(ctx, int64(messageID), b.agentName, reaction); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"message_id": messageID,
+		"reaction":   reaction,
+		"status":     "removed",
+	}, nil
+}
+
+func (b *ServiceBridge) callGetReactions(ctx context.Context, args map[string]any) (any, error) {
+	if b.reactionService == nil {
+		return nil, fmt.Errorf("reaction service not available")
+	}
+
+	messageID := getInt(args, "message_id", 0)
+	if messageID == 0 {
+		return nil, fmt.Errorf("'message_id' parameter is required")
+	}
+
+	rxns, state, err := b.reactionService.GetReactions(ctx, int64(messageID))
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"reactions":      rxns,
+		"workflow_state": state,
+		"count":          len(rxns),
+	}, nil
+}
+
+func (b *ServiceBridge) callListByState(ctx context.Context, args map[string]any) (any, error) {
+	if b.reactionService == nil {
+		return nil, fmt.Errorf("reaction service not available")
+	}
+	if b.channelService == nil {
+		return nil, fmt.Errorf("channel service not available")
+	}
+
+	channelName := getString(args, "channel", "")
+	if channelName == "" {
+		return nil, fmt.Errorf("'channel' parameter is required")
+	}
+
+	state := getString(args, "state", "")
+	if state == "" {
+		return nil, fmt.Errorf("'state' parameter is required")
+	}
+
+	ch, err := b.channelService.GetChannelByName(ctx, channelName)
+	if err != nil {
+		return nil, err
+	}
+
+	messageIDs, err := b.reactionService.ListByState(ctx, ch.ID, state)
+	if err != nil {
+		return nil, err
+	}
+
+	if messageIDs == nil {
+		messageIDs = []int64{}
+	}
+
+	return map[string]any{
+		"message_ids": messageIDs,
+		"count":       len(messageIDs),
+		"channel":     channelName,
+		"state":       state,
 	}, nil
 }
 

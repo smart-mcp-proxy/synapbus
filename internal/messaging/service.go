@@ -31,6 +31,12 @@ type AttachmentLinker interface {
 	GetByMessageID(ctx context.Context, messageID int64) ([]AttachmentInfo, error)
 }
 
+// ReactionEnricher loads reactions for messages. This avoids importing the
+// reactions package directly. Set via SetReactionEnricher.
+type ReactionEnricher interface {
+	GetByMessageIDs(ctx context.Context, messageIDs []int64) (map[int64][]ReactionInfo, error)
+}
+
 // MessagingService provides business logic for messaging operations.
 type MessagingService struct {
 	store      MessageStore
@@ -38,6 +44,7 @@ type MessagingService struct {
 	dispatcher dispatcher.EventDispatcher
 	embeddings EmbeddingNotifier
 	attLinker  AttachmentLinker
+	rxEnricher ReactionEnricher
 	listeners  []MessageListener
 	logger     *slog.Logger
 }
@@ -64,6 +71,11 @@ func (s *MessagingService) SetEmbeddingNotifier(n EmbeddingNotifier) {
 // SetAttachmentLinker sets the attachment linker for message-attachment binding.
 func (s *MessagingService) SetAttachmentLinker(l AttachmentLinker) {
 	s.attLinker = l
+}
+
+// SetReactionEnricher sets the reaction enricher for message reaction loading.
+func (s *MessagingService) SetReactionEnricher(e ReactionEnricher) {
+	s.rxEnricher = e
 }
 
 // AddMessageListener registers a listener that is notified after message creation.
@@ -582,6 +594,38 @@ func (s *MessagingService) EnrichMessages(ctx context.Context, msgs []*Message) 
 			}
 			if len(atts) > 0 {
 				m.Attachments = atts
+			}
+		}
+	}
+
+	// Batch-load reactions and derive workflow state.
+	if s.rxEnricher != nil {
+		rxMap, err := s.rxEnricher.GetByMessageIDs(ctx, ids)
+		if err != nil {
+			s.logger.Error("failed to load reactions", "error", err)
+		} else {
+			for _, m := range msgs {
+				if rxs, ok := rxMap[m.ID]; ok && len(rxs) > 0 {
+					m.Reactions = rxs
+					// Derive workflow state from reactions
+					highestPriority := 0
+					priorities := map[string]int{
+						"approve": 2, "in_progress": 3, "reject": 4, "done": 5, "published": 6,
+					}
+					states := map[string]string{
+						"approve": "approved", "in_progress": "in_progress", "reject": "rejected", "done": "done", "published": "published",
+					}
+					for _, rx := range rxs {
+						if p, ok := priorities[rx.Reaction]; ok && p > highestPriority {
+							highestPriority = p
+							m.WorkflowState = states[rx.Reaction]
+						}
+					}
+				}
+				// Default to "proposed" for channel messages with no reactions
+				if m.WorkflowState == "" && m.ChannelID != nil {
+					m.WorkflowState = "proposed"
+				}
 			}
 		}
 	}

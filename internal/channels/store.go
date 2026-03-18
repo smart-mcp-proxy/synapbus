@@ -83,9 +83,9 @@ func (s *SQLiteChannelStore) GetChannel(ctx context.Context, id int64) (*Channel
 	var ch Channel
 	var isPrivate, isSystem int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, topic, type, is_private, is_system, created_by, created_at, updated_at
+		`SELECT id, name, description, topic, type, is_private, is_system, created_by, auto_approve, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at
 		 FROM channels WHERE id = ?`, id,
-	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.AutoApprove, &ch.StalemateRemindAfter, &ch.StalemateEscalateAfter, &ch.CreatedAt, &ch.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrChannelNotFound
@@ -102,9 +102,9 @@ func (s *SQLiteChannelStore) GetChannelByName(ctx context.Context, name string) 
 	var ch Channel
 	var isPrivate, isSystem int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, topic, type, is_private, is_system, created_by, created_at, updated_at
+		`SELECT id, name, description, topic, type, is_private, is_system, created_by, auto_approve, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at
 		 FROM channels WHERE LOWER(name) = LOWER(?)`, name,
-	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.AutoApprove, &ch.StalemateRemindAfter, &ch.StalemateEscalateAfter, &ch.CreatedAt, &ch.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrChannelNotFound
@@ -120,7 +120,7 @@ func (s *SQLiteChannelStore) GetChannelByName(ctx context.Context, name string) 
 // is a member or has a pending invite.
 func (s *SQLiteChannelStore) ListChannels(ctx context.Context, agentName string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT c.id, c.name, c.description, c.topic, c.type, c.is_private, c.is_system, c.created_by, c.created_at, c.updated_at
+		`SELECT DISTINCT c.id, c.name, c.description, c.topic, c.type, c.is_private, c.is_system, c.created_by, c.auto_approve, c.stalemate_remind_after, c.stalemate_escalate_after, c.created_at, c.updated_at
 		 FROM channels c
 		 WHERE c.is_private = 0
 		    OR EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.agent_name = ?)
@@ -137,7 +137,7 @@ func (s *SQLiteChannelStore) ListChannels(ctx context.Context, agentName string)
 	for rows.Next() {
 		var ch Channel
 		var isPrivate, isSystem int
-		if err := rows.Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.Name, &ch.Description, &ch.Topic, &ch.Type, &isPrivate, &isSystem, &ch.CreatedBy, &ch.AutoApprove, &ch.StalemateRemindAfter, &ch.StalemateEscalateAfter, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan channel: %w", err)
 		}
 		ch.IsPrivate = isPrivate != 0
@@ -413,6 +413,23 @@ func (s *SQLiteChannelStore) GetChannelSummaries(ctx context.Context, agentName 
 		summaries = []ChannelSummary{}
 	}
 	return summaries, rows.Err()
+}
+
+// UpdateChannelSettings updates the workflow-related settings for a channel.
+func (s *SQLiteChannelStore) UpdateChannelSettings(ctx context.Context, id int64, settings ChannelSettings) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET auto_approve = ?, stalemate_remind_after = ?, stalemate_escalate_after = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		settings.AutoApprove, settings.StalemateRemindAfter, settings.StalemateEscalateAfter, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update channel settings: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrChannelNotFound
+	}
+	s.logger.Info("channel settings updated", "id", id)
+	return nil
 }
 
 // isUniqueConstraintError checks if an error is a SQLite unique constraint violation.

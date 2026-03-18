@@ -42,6 +42,16 @@ type Message struct {
 	UpdatedAt      time.Time        `json:"updated_at"`
 	ReplyCount     int              `json:"reply_count"`
 	Attachments    []AttachmentInfo `json:"attachments,omitempty"`
+	WorkflowState  string           `json:"workflow_state,omitempty"`
+	Reactions      []ReactionInfo   `json:"reactions,omitempty"`
+}
+
+// ReactionInfo is a lightweight reaction summary included in message responses.
+type ReactionInfo struct {
+	AgentName string          `json:"agent_name"`
+	Reaction  string          `json:"reaction"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // Conversation groups related messages into a thread.
