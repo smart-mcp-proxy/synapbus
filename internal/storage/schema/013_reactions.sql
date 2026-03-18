@@ -16,6 +16,7 @@ CREATE INDEX idx_reactions_agent ON message_reactions(agent_name);
 CREATE INDEX idx_reactions_type ON message_reactions(reaction);
 
 -- Channel workflow settings
+ALTER TABLE channels ADD COLUMN workflow_enabled BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN auto_approve BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN stalemate_remind_after TEXT NOT NULL DEFAULT '24h';
 ALTER TABLE channels ADD COLUMN stalemate_escalate_after TEXT NOT NULL DEFAULT '72h';

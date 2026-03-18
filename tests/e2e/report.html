@@ -1,0 +1,1787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SynapBus E2E Test Report</title>
+<style>
+:root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --border: #475569;
+    --green: #10b981;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+h2 { font-size: 1.3rem; margin-bottom: 1rem; color: var(--text-dim); }
+h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+h4 { font-size: 0.95rem; margin: 1rem 0 0.5rem; color: var(--text-dim); }
+
+.header {
+    text-align: center;
+    padding: 2rem 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2rem;
+}
+
+.header .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 1.2rem;
+    text-align: center;
+}
+
+.stat-card .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.stat-card .stat-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+.stat-value.yellow { color: var(--yellow); }
+.stat-value.blue { color: var(--blue); }
+.stat-value.purple { color: var(--purple); }
+
+.filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.filter-btn {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.filter-btn:hover { background: var(--surface2); }
+.filter-btn.active { background: var(--blue); border-color: var(--blue); }
+
+.scenario-card {
+    background: var(--surface);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.scenario-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.2rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.scenario-header:hover { background: var(--surface2); }
+
+.scenario-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.scenario-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.meta-item {
+    white-space: nowrap;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: 0.05em;
+}
+
+.scenario-body {
+    padding: 0 1.2rem 1.2rem;
+    display: none;
+}
+
+.scenario-body.open { display: block; }
+
+.description {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+
+.agents-list {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.verification-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.verification-table th {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.verification-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+
+.error-block {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.error-block pre {
+    color: var(--red);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.8rem;
+}
+
+.agent-run {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.run-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.agent-name {
+    font-weight: 700;
+    color: var(--purple);
+    font-size: 0.95rem;
+}
+
+.run-meta {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.run-error {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--red);
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+details {
+    margin-bottom: 0.5rem;
+}
+
+summary {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 0.3rem 0;
+}
+
+summary:hover { color: var(--text); }
+
+pre {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    background: var(--surface2);
+    padding: 0.6rem;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 0.3rem;
+}
+
+.tool-call {
+    border-left: 3px solid var(--border);
+    padding: 0.3rem 0 0.3rem 0.8rem;
+    margin-bottom: 0.4rem;
+}
+
+.tool-call.tc-pass { border-left-color: var(--green); }
+.tool-call.tc-fail { border-left-color: var(--red); }
+
+.tc-header {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.2rem 0;
+}
+
+.tc-header:hover { color: var(--blue); }
+
+.tc-tool {
+    font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.tc-status { font-size: 0.75rem; }
+.tc-duration { font-size: 0.75rem; color: var(--text-dim); }
+
+.tc-body { padding: 0.5rem 0; }
+.tc-section { margin-bottom: 0.5rem; }
+.tc-section strong { font-size: 0.8rem; color: var(--text-dim); }
+
+.footer {
+    text-align: center;
+    padding: 2rem 0;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    margin-top: 2rem;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>SynapBus E2E Test Report</h1>
+    <p class="subtitle">Generated 2026-03-13 18:55:47 | Model: claude-sonnet-4-6 | Server: http://localhost:58782</p>
+</div>
+
+<div class="dashboard">
+    <div class="stat-card">
+        <div class="stat-value">7</div>
+        <div class="stat-label">Scenarios</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value green">7</div>
+        <div class="stat-label">Passed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value red">0</div>
+        <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value yellow">0</div>
+        <div class="stat-label">Errors</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value blue">177.2s</div>
+        <div class="stat-label">Duration</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple">65.5k / 6.2k</div>
+        <div class="stat-label">Tokens In/Out</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">$0.2900</div>
+        <div class="stat-label">Est. Cost</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">21</div>
+        <div class="stat-label">Tool Calls</div>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <button class="filter-btn active" onclick="filterScenarios('all')">All (7)</button>
+    <button class="filter-btn" onclick="filterScenarios('pass')">Passed (7)</button>
+    <button class="filter-btn" onclick="filterScenarios('fail')">Failed (0)</button>
+    <button class="filter-btn" onclick="filterScenarios('error')">Errors (0)</button>
+</div>
+
+<div id="scenarios">
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-0">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-0')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>direct_messaging</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">27.8s</span>
+                <span class="meta-item">11.1k in / 1.3k out</span>
+                <span class="meta-item">$0.0524</span>
+                <span class="meta-item">2 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-0">
+            <p class="description">Two agents exchange direct messages: discover, send, read, claim, reply, mark done</p>
+            <div class="agents-list">Agents: dm_alice, dm_bob</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice sent message to Bob</td><td class="mono">Found send_message tool call</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob read inbox</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob claimed message</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob sent reply</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob marked done</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice received reply from Bob</td><td class="mono">1 reply(ies) found</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">dm_alice</span>
+            <span class="run-meta">9.2s | 3.1k in / 461 out | 2 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Alice, a research agent on SynapBus. You communicate with other agents using the provided tools. Be concise. Complete your task in as few tool calls as possible.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>First, discover what other agents are available using discover_agents. Then send a message to &#x27;dm_bob&#x27; asking: &#x27;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&#x27; Use subject &#x27;MCP vs REST Analysis&#x27;.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Here&#x27;s a summary of both actions:
+
+---
+
+### 🔍 Agent Discovery
+The discovery query for **&quot;agent communication&quot;** returned **0 agents** currently registered on SynapBus. The network may be sparsely populated at the moment, or no agents have explicitly tagged themselves with that capability keyword. You could try other keywords (e.g., `&quot;research&quot;`, `&quot;analysis&quot;`, `&quot;data&quot;`) to broaden the search.
+
+---
+
+### ✉️ Message Sent to `dm_bob`
+The message was successfully dispatched! Here are the details:
+
+| Field | Value |
+|---|---|
+| **Recipient** | `dm_bob` |
+| **Subject** | `MCP vs REST Analysis` |
+| **Body** | *What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?* |
+| **Message ID** | `1` |
+| **Conversation ID** | `1` |
+| **Status** | ⏳ `pending` |
+
+The message i...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4469642912-1773420774321')">
+                <span class="tc-tool">discover_agents</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">62ms</span>
+            </div>
+            <div class="tc-body" id="tc-4469642912-1773420774321" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;query&quot;: &quot;agent communication&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;agents&quot;: [],
+  &quot;count&quot;: 0
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471779600-1773420774369')">
+                <span class="tc-tool">send_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">48ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471779600-1773420774369" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;to&quot;: &quot;dm_bob&quot;,
+  &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;,
+  &quot;subject&quot;: &quot;MCP vs REST Analysis&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;conversation_id&quot;: 1,
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;pending&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">dm_bob</span>
+            <span class="run-meta">17.9s | 8.1k in / 807 out | 4 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Bob, a data analyst agent on SynapBus. When you receive messages, process them and reply. Be concise and direct. Complete your task efficiently.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Check your inbox using read_inbox
+2. Claim the message using claim_messages
+3. Send a reply to &#x27;dm_alice&#x27; answering her question about MCP vs REST
+4. Mark the original message as done using mark_done with the message_id
+Do all steps.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>All 4 steps completed successfully! Here&#x27;s a summary:
+
+| Step | Action | Result |
+|------|--------|--------|
+| ✅ 1 | **Read Inbox** | Found 1 message from `dm_alice` (ID: 1) asking about MCP vs REST |
+| ✅ 2 | **Claim Message** | Message ID 1 claimed and set to `processing` |
+| ✅ 3 | **Reply Sent** | Answered Alice with the top 3 trade-offs (complexity, state management, interoperability) |
+| ✅ 4 | **Mark Done** | Message ID 1 marked as `done` |</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471781200-1773420782962')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">106ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471781200-1773420782962" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 1,
+      &quot;conversation_id&quot;: 1,
+      &quot;from_agent&quot;: &quot;dm_alice&quot;,
+      &quot;to_agent&quot;: &quot;dm_bob&quot;,
+      &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;metadata&quot;: {},
+      &quot;created_at&quot;: &quot;2026-03-13T16:52:54Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T16:52:54Z&quot;
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471828736-1773420783052')">
+                <span class="tc-tool">claim_messages</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">90ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471828736-1773420783052" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 1,
+      &quot;conversation_id&quot;: 1,
+      &quot;from_agent&quot;: &quot;dm_alice&quot;,
+      &quot;to_agent&quot;: &quot;dm_bob&quot;,
+      &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;processing&quot;,
+      &quot;metadata&quot;: {},
+      &quot;claimed_by&quot;: &quot;dm_bob&quot;,
+      &quot;claimed_at&quot;: &quot;2026-03-13T16:53:03Z&quot;,
+      &quot;created_at&quot;: &quot;2026-03-13T16:52:54Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T16:53:03Z&quot;
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471828432-1773420792681')">
+                <span class="tc-tool">send_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">112ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471828432-1773420792681" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;to&quot;: &quot;dm_alice&quot;,
+  &quot;subject&quot;: &quot;Re: MCP vs REST APIs for Agent-to-Agent Communication&quot;,
+  &quot;body&quot;: &quot;Hey Alice! Great question. Here are the top 3 trade-offs of MCP vs REST for agent-to-agent communication:\n\n1. **Protocol Complexity vs. Simplicity**\n   - **REST** is simple, stateless, and universally understood \u2014 easy to implement and debug.\n   - **MCP (Model Context Protocol)** is more structured and purpose-built for AI/agent contexts, but adds setup complexity and requires both sid...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;conversation_id&quot;: 2,
+  &quot;message_id&quot;: 2,
+  &quot;status&quot;: &quot;pending&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4470962608-1773420794626')">
+                <span class="tc-tool">mark_done</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">111ms</span>
+            </div>
+            <div class="tc-body" id="tc-4470962608-1773420794626" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;done&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;done&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-1">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-1')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>channels</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">51.4s</span>
+                <span class="meta-item">21.1k in / 1.7k out</span>
+                <span class="meta-item">$0.0891</span>
+                <span class="meta-item">3 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-1">
+            <p class="description">Three agents communicate via a shared channel: create, join, broadcast, reply</p>
+            <div class="agents-list">Agents: ch_alice, ch_bob, ch_carol</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Channel &#x27;research-hub&#x27; created</td><td class="mono">{&#x27;channel_id&#x27;: 1, &#x27;created_by&#x27;: &#x27;ch_alice&#x27;, &#x27;description&#x27;: &#x27;Research collaboration channel&#x27;, &#x27;is_private&#x27;: False, &#x27;name&#x27;: &#x27;research-hub&#x27;, &#x27;topic&#x27;: &#x27;Current research topics&#x27;, &#x27;type&#x27;: &#x27;standard&#x27;}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob joined channel</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Carol joined channel</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice broadcast to channel</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob replied on channel</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Carol replied on channel</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice received channel replies</td><td class="mono">2 channel messages received</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">ch_alice</span>
+            <span class="run-meta">6.6s | 4.7k in / 249 out | 1 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Alice, coordinator of the research-hub channel on SynapBus. Use the send_channel_message tool to broadcast to the channel. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>Send a message to channel &#x27;research-hub&#x27; asking: &#x27;Team, what are the most promising approaches to agent coordination? Please share your perspective.&#x27; Use the send_channel_message tool with channel_name=&#x27;research-hub&#x27;.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>✅ Message successfully broadcast to the **research-hub** channel! Here&#x27;s a summary of the delivery:
+
+- 📡 **Channel:** research-hub (ID: 1)
+- 💬 **Message:** *&quot;Team, what are the most promising approaches to agent coordination? Please share your perspective.&quot;*
+- 👥 **Recipients:** 2 members reached
+- 🆔 **Message IDs:** 3 &amp; 4
+
+The team has been prompted and should start sharing their perspectives on agent coordination approaches shortly. I&#x27;ll keep an eye on the channel for any responses! 🔍</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471514224-1773420801650')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">70ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471514224-1773420801650" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;research-hub&quot;,
+  &quot;body&quot;: &quot;Team, what are the most promising approaches to agent coordination? Please share your perspective.&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 1,
+  &quot;message_ids&quot;: [
+    3,
+    4
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">ch_bob</span>
+            <span class="run-meta">22.1s | 7.7k in / 701 out | 2 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Bob, a member of the research-hub channel on SynapBus. Read your inbox for channel messages and reply on the channel. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Read your inbox to see channel messages
+2. Reply on the channel &#x27;research-hub&#x27; with your analysis perspective using send_channel_message with channel_name=&#x27;research-hub&#x27;</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Done! Here&#x27;s a summary of what happened:
+
+- 📬 **Inbox:** Found a message from **Alice** on the `research-hub` channel asking: *&quot;What are the most promising approaches to agent coordination?&quot;*
+- 💬 **Replied on `research-hub`** with my analysis covering **5 key approaches**:
+  1. **Blackboard Systems** – shared async knowledge space
+  2. **Market-Based / Auction Mechanisms** – dynamic task bidding
+  3. **Hierarchical Orchestration** – coordinator + specialized agents
+  4. **Publish-Subscribe** – event-driven, scalable
+  5. **Consensus Protocols** – fault-tolerant agreement
+
+- 🏆 **My recommendation:** A **hybrid of Blackboard + Hierarchical Orchestration** for research workflows — shared context with clear delegation.
+
+The message was delivered to **2 recipients** on the channel! 🚀</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471514496-1773420814565')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">124ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471514496-1773420814565" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 3,
+      &quot;conversation_id&quot;: 3,
+      &quot;from_agent&quot;: &quot;ch_alice&quot;,
+      &quot;to_agent&quot;: &quot;ch_bob&quot;,
+      &quot;body&quot;: &quot;Team, what are the most promising approaches to agent coordination? Please share your perspective.&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;metadata&quot;: {
+        &quot;channel_id&quot;: 1,
+        &quot;channel_name&quot;: &quot;research-hub&quot;
+      },
+      &quot;created_at&quot;: &quot;2026-03-13T16:53:21Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T16:53:21Z&quot;
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471288912-1773420823208')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">124ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471288912-1773420823208" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;research-hub&quot;,
+  &quot;body&quot;: &quot;Great question, Alice! Here&#x27;s my take on the most promising approaches to agent coordination:\n\n**1. Blackboard Systems**\nA shared knowledge space where agents read/write asynchronously. Great for decoupled, heterogeneous agent teams \u2014 no agent needs to know about others directly.\n\n**2. Market-Based / Auction Mechanisms**\nAgents bid for tasks based on capability and availability. Efficient for dynamic workload distribution and avoids centr...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 1,
+  &quot;message_ids&quot;: [
+    5,
+    6
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">ch_carol</span>
+            <span class="run-meta">21.6s | 8.6k in / 774 out | 2 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Carol, a member of the research-hub channel on SynapBus. Read your inbox for channel messages and reply on the channel. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Read your inbox to see channel messages
+2. Reply on the channel &#x27;research-hub&#x27; with your writing perspective using send_channel_message with channel_name=&#x27;research-hub&#x27;</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Done! Here&#x27;s a summary of what happened:
+
+---
+
+### 📥 Inbox Summary
+- **Alice** kicked off the discussion asking: *&quot;What are the most promising approaches to agent coordination?&quot;*
+- **Bob** responded with a thorough technical breakdown covering Blackboard Systems, Market-Based Auctions, Hierarchical Orchestration, Pub/Sub, and Consensus Protocols — recommending a **Blackboard + Hierarchical** hybrid.
+
+---
+
+### ✍️ My Reply on `research-hub`
+I added a **Communication-First Coordination** perspective, highlighting:
+1. **Structured Messaging Protocols** — schema-validated, unambiguous messages
+2. **Shared Narrative/Context Threads** — persistent context across agent exchanges
+3. **Role-Aware Communication** — adapting tone/detail to the recipient&#x27;s role
+4. **Transparent Reasoning** — sharing *w...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471811664-1773420830323')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">165ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471811664-1773420830323" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 2,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 4,
+      &quot;conversation_id&quot;: 4,
+      &quot;from_agent&quot;: &quot;ch_alice&quot;,
+      &quot;to_agent&quot;: &quot;ch_carol&quot;,
+      &quot;body&quot;: &quot;Team, what are the most promising approaches to agent coordination? Please share your perspective.&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;metadata&quot;: {
+        &quot;channel_id&quot;: 1,
+        &quot;channel_name&quot;: &quot;research-hub&quot;
+      },
+      &quot;created_at&quot;: &quot;2026-03-13T16:53:21Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T16:53:21Z&quot;
+    },
+    {
+...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471551904-1773420842379')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">175ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471551904-1773420842379" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;research-hub&quot;,
+  &quot;body&quot;: &quot;Great question, Alice \u2014 and solid breakdown, Bob! \ud83d\ude4c Here&#x27;s my take as someone who thinks a lot about **writing and communication** in agent systems:\n\n**My Perspective: Communication-First Coordination**\n\nToo often, coordination frameworks focus on *task flow* and overlook **how agents actually communicate meaning**. Here&#x27;s what I find most promising:\n\n**1. Structured Messaging Protocols**\nAgents should exchange well-defined, s...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 1,
+  &quot;message_ids&quot;: [
+    7,
+    8
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-2">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-2')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>task_auction</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">9.5s</span>
+                <span class="meta-item">6.0k in / 378 out</span>
+                <span class="meta-item">$0.0237</span>
+                <span class="meta-item">3 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-2">
+            <p class="description">Task auction lifecycle: post task, bid, accept bid, complete task</p>
+            <div class="agents-list">Agents: auction_poster, auction_bidder1, auction_bidder2</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Auction channel created</td><td class="mono">{&#x27;channel_id&#x27;: 2, &#x27;created_by&#x27;: &#x27;auction_poster&#x27;, &#x27;description&#x27;: &#x27;Task marketplace&#x27;, &#x27;is_private&#x27;: False, &#x27;name&#x27;: &#x27;task-market&#x27;, &#x27;topic&#x27;: &#x27;&#x27;, &#x27;type&#x27;: &#x27;auction&#x27;}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bidder1 joined</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bidder2 joined</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Task posted</td><td class="mono">task_id=1</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bidder1 submitted bid</td><td class="mono">bid_id=1</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bidder2 submitted bid</td><td class="mono">bid_id=2</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Poster accepted Bidder1&#x27;s bid</td><td class="mono">{&#x27;bid_id&#x27;: 1, &#x27;status&#x27;: &#x27;accepted&#x27;, &#x27;task_id&#x27;: 1}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bidder1 completed task</td><td class="mono">{&#x27;status&#x27;: &#x27;completed&#x27;, &#x27;task_id&#x27;: 1}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Task shows as completed</td><td class="mono">1 completed tasks found</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">auction_bidder1</span>
+            <span class="run-meta">7.9s | 6.0k in / 378 out | 1 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Bidder One, a Python/ML specialist on SynapBus. Submit a bid on a task. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>Submit a bid on task_id 1 using the bid_task tool. Include your capabilities as JSON: &#x27;{&quot;python&quot;: true, &quot;ml&quot;: true}&#x27;, time_estimate &#x27;3 days&#x27;, and message explaining why you are a good fit.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>✅ **Bid submitted successfully!** Here&#x27;s a summary:
+
+| Field | Details |
+|---|---|
+| **Bid ID** | 1 |
+| **Task ID** | 1 |
+| **Agent** | auction_bidder1 |
+| **Status** | Pending |
+| **Time Estimate** | 3 days |
+| **Capabilities** | Python ✅, ML ✅ |
+| **Message** | Highlighted Python/ML expertise, clean code delivery, and on-time commitment |
+
+The bid is now **pending** and awaiting review by the task poster. Fingers crossed! 🤞</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471543744-1773420855230')">
+                <span class="tc-tool">bid_task</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">73ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471543744-1773420855230" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;task_id&quot;: 1,
+  &quot;capabilities&quot;: &quot;{\&quot;python\&quot;: true, \&quot;ml\&quot;: true}&quot;,
+  &quot;time_estimate&quot;: &quot;3 days&quot;,
+  &quot;message&quot;: &quot;Hi! I&#x27;m Bidder One, a Python/ML specialist on SynapBus. I have strong expertise in Python development and machine learning, making me an excellent fit for this task. I can deliver clean, efficient, and well-documented code leveraging the latest ML frameworks. With an estimated turnaround of 3 days, I&#x27;ll ensure high-quality results on time. Looking forward to contributing!&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;agent_name&quot;: &quot;auction_bidder1&quot;,
+  &quot;bid_id&quot;: 1,
+  &quot;status&quot;: &quot;pending&quot;,
+  &quot;task_id&quot;: 1,
+  &quot;time_estimate&quot;: &quot;3 days&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-3">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-3')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>access_control</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">1.5s</span>
+                <span class="meta-item">0 in / 0 out</span>
+                <span class="meta-item">$0.0000</span>
+                <span class="meta-item">3 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-3">
+            <p class="description">Private channel access control: unauthorized join, send, kick, invite all return errors</p>
+            <div class="agents-list">Agents: acl_owner, acl_member, acl_outsider</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Private channel created</td><td class="mono">{&#x27;channel_id&#x27;: 3, &#x27;created_by&#x27;: &#x27;acl_owner&#x27;, &#x27;description&#x27;: &#x27;Top secret operations&#x27;, &#x27;is_private&#x27;: True, &#x27;name&#x27;: &#x27;secret-ops&#x27;, &#x27;topic&#x27;: &#x27;&#x27;, &#x27;type&#x27;: &#x27;standard&#x27;}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Owner invited member</td><td class="mono">{&#x27;agent_name&#x27;: &#x27;acl_member&#x27;, &#x27;channel_id&#x27;: 3, &#x27;status&#x27;: &#x27;invited&#x27;}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Member joined channel</td><td class="mono">{&#x27;channel_id&#x27;: 3, &#x27;status&#x27;: &#x27;joined&#x27;}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Outsider join rejected</td><td class="mono">{&#x27;_raw&#x27;: &#x27;join_channel failed: not invited to this private channel&#x27;, &#x27;_mcp_error&#x27;: True}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Outsider message rejected</td><td class="mono">{&#x27;_raw&#x27;: &#x27;send_channel_message failed: not a channel member&#x27;, &#x27;_mcp_error&#x27;: True}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Member kick-owner rejected</td><td class="mono">{&#x27;_raw&#x27;: &#x27;kick_from_channel failed: not the channel owner&#x27;, &#x27;_mcp_error&#x27;: True}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Member invite rejected</td><td class="mono">{&#x27;_raw&#x27;: &#x27;invite_to_channel failed: not the channel owner&#x27;, &#x27;_mcp_error&#x27;: True}</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Owner kicked member</td><td class="mono">{&#x27;agent_name&#x27;: &#x27;acl_member&#x27;, &#x27;channel_id&#x27;: 3, &#x27;status&#x27;: &#x27;kicked&#x27;}</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-4">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-4')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>agent_discovery</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">10.8s</span>
+                <span class="meta-item">3.7k in / 420 out</span>
+                <span class="meta-item">$0.0174</span>
+                <span class="meta-item">4 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-4">
+            <p class="description">Four agents with different capabilities: discover by keyword, send targeted message</p>
+            <div class="agents-list">Agents: disc_researcher, disc_coder, disc_analyst, disc_translator</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Researcher discovered agents</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Discovery found disc_analyst</td><td class="mono">3 agents returned</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Researcher sent message</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Analyst received message from researcher</td><td class="mono">1 messages from researcher</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">disc_researcher</span>
+            <span class="run-meta">8.8s | 3.7k in / 420 out | 2 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are a researcher agent on SynapBus. You need to find agents with data analysis capabilities and send them a message. Be concise and efficient.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Use discover_agents with query &#x27;analysis&#x27; to find agents with data analysis capabilities.
+2. Send a message to the agent named &#x27;disc_analyst&#x27; asking them to &#x27;Analyze the correlation between agent communication frequency and task completion rates.&#x27; Use subject &#x27;Analysis Request&#x27;.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Both tasks completed successfully! Here&#x27;s a summary:
+
+---
+
+### 🔍 1. Discovered Agents with Analysis Capabilities (3 found)
+
+| Display Name | Agent Name | Capabilities | Status |
+|---|---|---|---|
+| Bob (Channel Member) | `ch_bob` | `analysis` | ✅ Active |
+| Analyst Agent | `disc_analyst` | `data_analysis`, `statistics` | ✅ Active |
+| Bob the Analyst | `dm_bob` | `data_analysis`, `coding` | ✅ Active |
+
+---
+
+### 📨 2. Message Sent to `disc_analyst`
+
+- **Subject:** Analysis Request
+- **Body:** *&quot;Analyze the correlation between agent communication frequency and task completion rates.&quot;*
+- **Message ID:** `9` | **Conversation ID:** `6` | **Status:** `pending`
+
+---
+
+The message is queued and awaiting processing by `disc_analyst` (the **Analyst Agent**), who is perfectly suited for this task given ...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471765968-1773420865518')">
+                <span class="tc-tool">discover_agents</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">551ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471765968-1773420865518" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;query&quot;: &quot;analysis&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;agents&quot;: [
+    {
+      &quot;capabilities&quot;: {
+        &quot;analysis&quot;: true
+      },
+      &quot;display_name&quot;: &quot;Bob (Channel Member)&quot;,
+      &quot;name&quot;: &quot;ch_bob&quot;,
+      &quot;status&quot;: &quot;active&quot;,
+      &quot;type&quot;: &quot;ai&quot;
+    },
+    {
+      &quot;capabilities&quot;: {
+        &quot;data_analysis&quot;: true,
+        &quot;statistics&quot;: true
+      },
+      &quot;display_name&quot;: &quot;Analyst Agent&quot;,
+      &quot;name&quot;: &quot;disc_analyst&quot;,
+      &quot;status&quot;: &quot;active&quot;,
+      &quot;type&quot;: &quot;ai&quot;
+    },
+    {
+      &quot;capabilities&quot;: {
+        &quot;data_analysis&quot;: true,
+        &quot;coding&quot;: t...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471751632-1773420866048')">
+                <span class="tc-tool">send_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">529ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471751632-1773420866048" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;to&quot;: &quot;disc_analyst&quot;,
+  &quot;subject&quot;: &quot;Analysis Request&quot;,
+  &quot;body&quot;: &quot;Analyze the correlation between agent communication frequency and task completion rates.&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;conversation_id&quot;: 6,
+  &quot;message_id&quot;: 9,
+  &quot;status&quot;: &quot;pending&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-5">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-5')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>blackboard</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">72.5s</span>
+                <span class="meta-item">23.5k in / 2.5k out</span>
+                <span class="meta-item">$0.1073</span>
+                <span class="meta-item">3 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-5">
+            <p class="description">Blackboard channel stigmergy: scout writes findings, analyst writes analysis, coordinator summarizes</p>
+            <div class="agents-list">Agents: bb_scout, bb_analyst, bb_coordinator</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Blackboard channel created</td><td class="mono">{&#x27;channel_id&#x27;: 4, &#x27;created_by&#x27;: &#x27;bb_coordinator&#x27;, &#x27;description&#x27;: &#x27;Shared blackboard for collaborative findings&#x27;, &#x27;is_private&#x27;: False, &#x27;name&#x27;: &#x27;shared-findings&#x27;, &#x27;topic&#x27;: &#x27;Current investigation&#x27;, &#x27;type</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Scout joined</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Analyst joined</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Scout posted findings</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Analyst posted analysis</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Coordinator posted summary</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Scout sees other agents&#x27; messages</td><td class="mono">2 messages from other agents</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">bb_scout</span>
+            <span class="run-meta">8.5s | 4.8k in / 300 out | 1 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are a scout agent on SynapBus. Write your field observations to the shared blackboard channel. Be concise and factual.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>Post your findings to the &#x27;shared-findings&#x27; channel using send_channel_message. Report: &#x27;Field observation: Detected 3 anomalous patterns in network traffic at nodes 7, 12, and 15. Node 7 shows highest deviation (4.2 sigma). Timestamps correlate with batch processing windows.&#x27;</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>✅ **Field observation successfully posted** to the `shared-findings` blackboard channel. Here&#x27;s a summary of the transmission:
+
+- **Channel:** `shared-findings` (Channel ID: 4)
+- **Recipients notified:** 2 agents
+- **Message IDs:** 10, 11
+
+**Observation logged:**
+&gt; *Detected 3 anomalous patterns in network traffic at nodes 7, 12, and 15. Node 7 shows highest deviation (4.2 sigma). Timestamps correlate with batch processing windows.*
+
+The findings are now visible to all channel members for review and follow-up analysis. Node 7&#x27;s 4.2-sigma deviation stands out as the priority flag — other agents on the channel can coordinate further investigation from here.</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471919360-1773420877717')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">461ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471919360-1773420877717" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;shared-findings&quot;,
+  &quot;body&quot;: &quot;Field observation: Detected 3 anomalous patterns in network traffic at nodes 7, 12, and 15. Node 7 shows highest deviation (4.2 sigma). Timestamps correlate with batch processing windows.&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 4,
+  &quot;message_ids&quot;: [
+    10,
+    11
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">bb_analyst</span>
+            <span class="run-meta">38.8s | 8.6k in / 1.1k out | 3 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are an analyst agent on SynapBus. Read the blackboard, analyze the findings, and write your analysis back. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Read your inbox to see the scout&#x27;s findings
+2. Post your analysis to &#x27;shared-findings&#x27; channel using send_channel_message. Analyze the patterns mentioned and suggest root causes.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Analysis posted successfully! Here&#x27;s a summary of what was done and found:
+
+---
+
+### 📥 Scout&#x27;s Findings (from inbox)
+`bb_scout` reported **3 anomalous network traffic patterns** at **nodes 7, 12, and 15**, with key details:
+- **Node 7** is the most severe at **4.2 sigma** deviation
+- All anomalies are **temporally correlated with batch processing windows**
+
+---
+
+### 🧠 Analysis Posted to `shared-findings`
+The full report was sent to the blackboard channel (reached **2 recipients**) with these root cause hypotheses, ranked by likelihood:
+
+| # | Root Cause | Key Signal |
+|---|---|---|
+| 1 | **Batch Job Overload** | Direct temporal correlation with batch windows |
+| 2 | **Shared Resource Contention** | All 3 nodes anomalous simultaneously |
+| 3 | **Misconfigured Scheduling** | Concurrent jobs ...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4472560464-1773420885074')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">349ms</span>
+            </div>
+            <div class="tc-body" id="tc-4472560464-1773420885074" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 11,
+      &quot;conversation_id&quot;: 8,
+      &quot;from_agent&quot;: &quot;bb_scout&quot;,
+      &quot;to_agent&quot;: &quot;bb_analyst&quot;,
+      &quot;body&quot;: &quot;Field observation: Detected 3 anomalous patterns in network traffic at nodes 7, 12, and 15. Node 7 shows highest deviation (4.2 sigma). Timestamps correlate with batch processing windows.&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;metadata&quot;: {
+        &quot;channel_id&quot;: 4,
+        &quot;channel_name&quot;: &quot;shared-findings&quot;
+      },
+     ...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4472564112-1773420885383')">
+                <span class="tc-tool">list_channels</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">309ms</span>
+            </div>
+            <div class="tc-body" id="tc-4472564112-1773420885383" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channels&quot;: [
+    {
+      &quot;created_by&quot;: &quot;ch_alice&quot;,
+      &quot;description&quot;: &quot;Research collaboration channel&quot;,
+      &quot;id&quot;: 1,
+      &quot;is_private&quot;: false,
+      &quot;member_count&quot;: 3,
+      &quot;name&quot;: &quot;research-hub&quot;,
+      &quot;topic&quot;: &quot;Current research topics&quot;,
+      &quot;type&quot;: &quot;standard&quot;
+    },
+    {
+      &quot;created_by&quot;: &quot;bb_coordinator&quot;,
+      &quot;description&quot;: &quot;Shared blackboard for collaborative findings&quot;,
+      &quot;id&quot;: 4,
+      &quot;is_private&quot;: false,
+      &quot;member_count&quot;: 3,
+      &quot;name&quot;: &quot;shared-findings&quot;,
+     ...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4461095136-1773420914669')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">342ms</span>
+            </div>
+            <div class="tc-body" id="tc-4461095136-1773420914669" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;shared-findings&quot;,
+  &quot;body&quot;: &quot;## \ud83d\udd0d Analyst Report \u2014 Network Traffic Anomaly Analysis\n\n**Source:** bb_scout field observation\n**Nodes of Interest:** 7, 12, 15\n**Analysis Timestamp:** 2026-03-13\n\n---\n\n### \ud83d\udcca Pattern Summary\n\nThree anomalous traffic patterns were detected across nodes 7, 12, and 15. Node 7 is the most severe outlier at **4.2 sigma** deviation \u2014 well beyond typical alert thresholds (usually 3 sigma). All anomalies correlat...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 4,
+  &quot;message_ids&quot;: [
+    12,
+    13
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">bb_coordinator</span>
+            <span class="run-meta">22.2s | 10.2k in / 1.1k out | 3 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are the coordinator agent on SynapBus. Read all blackboard entries, synthesize a summary, and post it. Be concise.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Read your inbox to see all channel messages
+2. Post a summary to &#x27;shared-findings&#x27; using send_channel_message. Synthesize the scout&#x27;s observations and analyst&#x27;s findings into an action plan.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>The summary has been posted to **`shared-findings`** and delivered to **2 recipients**. Here&#x27;s what was done:
+
+---
+
+### 📥 Inbox Findings
+I read **2 messages** from the blackboard:
+
+1. **`bb_scout` (msg #10)** — Field observation: 3 anomalous traffic patterns at **Nodes 7, 12, and 15**. Node 7 is the worst at **4.2σ**, all correlating with **batch processing windows**.
+
+2. **`bb_analyst` (msg #12)** — Deep analysis citing 4 root cause hypotheses: concurrent batch jobs, shared resource contention, misconfigured scheduling, or Node 7 acting as a network hub/gateway.
+
+---
+
+### 📤 Action Plan Posted
+The synthesized summary included:
+- **Context** — what the scout observed and what the analyst concluded
+- **Root causes** ranked by likelihood
+- **A prioritized action table** assigning tasks to Ops...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471738928-1773420924746')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">387ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471738928-1773420924746" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;include_read&quot;: true,
+  &quot;limit&quot;: 50
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 2,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 12,
+      &quot;conversation_id&quot;: 9,
+      &quot;from_agent&quot;: &quot;bb_analyst&quot;,
+      &quot;to_agent&quot;: &quot;bb_coordinator&quot;,
+      &quot;body&quot;: &quot;## \ud83d\udd0d Analyst Report \u2014 Network Traffic Anomaly Analysis\n\n**Source:** bb_scout field observation\n**Nodes of Interest:** 7, 12, 15\n**Analysis Timestamp:** 2026-03-13\n\n---\n\n### \ud83d\udcca Pattern Summary\n\nThree anomalous traffic patterns were detected across nodes 7, 12, and 15. Node 7 is the most severe out...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471319568-1773420925098')">
+                <span class="tc-tool">list_channels</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">352ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471319568-1773420925098" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channels&quot;: [
+    {
+      &quot;created_by&quot;: &quot;ch_alice&quot;,
+      &quot;description&quot;: &quot;Research collaboration channel&quot;,
+      &quot;id&quot;: 1,
+      &quot;is_private&quot;: false,
+      &quot;member_count&quot;: 3,
+      &quot;name&quot;: &quot;research-hub&quot;,
+      &quot;topic&quot;: &quot;Current research topics&quot;,
+      &quot;type&quot;: &quot;standard&quot;
+    },
+    {
+      &quot;created_by&quot;: &quot;bb_coordinator&quot;,
+      &quot;description&quot;: &quot;Shared blackboard for collaborative findings&quot;,
+      &quot;id&quot;: 4,
+      &quot;is_private&quot;: false,
+      &quot;member_count&quot;: 3,
+      &quot;name&quot;: &quot;shared-findings&quot;,
+     ...</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4471324368-1773420937242')">
+                <span class="tc-tool">send_channel_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">388ms</span>
+            </div>
+            <div class="tc-body" id="tc-4471324368-1773420937242" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;channel_name&quot;: &quot;shared-findings&quot;,
+  &quot;priority&quot;: 8,
+  &quot;body&quot;: &quot;## \ud83d\udccb Coordinator Summary &amp; Action Plan \u2014 Network Traffic Anomaly\n**Date:** 2026-03-13 | **Sources:** bb_scout (field observation) + bb_analyst (root cause analysis)\n\n---\n\n### \ud83d\udd0d What We Know\n- **bb_scout** detected **3 anomalous traffic patterns** at **Nodes 7, 12, and 15**.\n- **Node 7** is the most critical outlier at **4.2 sigma** \u2014 far above the standard 3-sigma alert threshold.\n- All ano...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;channel_id&quot;: 4,
+  &quot;message_ids&quot;: [
+    14,
+    15
+  ],
+  &quot;recipients&quot;: 2
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-6">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-6')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>audit_trail</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">3.7s</span>
+                <span class="meta-item">0 in / 0 out</span>
+                <span class="meta-item">$0.0000</span>
+                <span class="meta-item">2 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-6">
+            <p class="description">Agents perform actions, then verify traces via REST API</p>
+            <div class="agents-list">Agents: audit_alice, audit_bob</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>GET /api/traces returns 200</td><td class="mono">status=200</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Traces returned</td><td class="mono">58 total traces</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice&#x27;s actions in traces</td><td class="mono">4 traces for audit_alice</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>send_message action traced</td><td class="mono">actions found: [&#x27;read_inbox&#x27;, &#x27;send_message&#x27;, &#x27;channel.invite&#x27;, &#x27;channel.join&#x27;, &#x27;swarm.task_completed&#x27;, &#x27;channel.list&#x27;, &#x27;channel.create&#x27;, &#x27;channel.kick&#x27;, &#x27;swarm.task_posted&#x27;, &#x27;swarm.bid_accepted&#x27;]</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Filtered traces by agent_name</td><td class="mono">status=200</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Filtered results only contain Alice</td><td class="mono">4 traces, all Alice: True</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>GET /api/traces/stats returns 200</td><td class="mono">status=200</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Stats contain action counts</td><td class="mono">stats: {&#x27;channel.broadcast&#x27;: 7, &#x27;channel.create&#x27;: 5, &#x27;channel.invite&#x27;: 1, &#x27;channel.join&#x27;: 8, &#x27;channel.kick&#x27;: 1, &#x27;channel.list&#x27;: 2, &#x27;claim_messages&#x27;: 1, &#x27;mark_done&#x27;: 1, &#x27;read_inbox&#x27;: 10, &#x27;send_message&#x27;...</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>GET /api/traces/export returns 200</td><td class="mono">status=200, content-type=application/json</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Export contains traces</td><td class="mono">58 exported traces</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Exported traces have expected fields</td><td class="mono">fields: [&#x27;id&#x27;, &#x27;owner_id&#x27;, &#x27;agent_name&#x27;, &#x27;action&#x27;, &#x27;details&#x27;, &#x27;timestamp&#x27;]</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+            </div>
+        </div>
+    </div>
+    
+</div>
+
+<div class="footer">
+    SynapBus E2E Test Suite | Pass Rate: 100%
+</div>
+
+<script>
+function toggleSection(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.style.display === 'none' || !el.style.display) {
+        el.style.display = 'block';
+        el.classList.add('open');
+    } else {
+        el.style.display = 'none';
+        el.classList.remove('open');
+    }
+}
+
+function filterScenarios(status) {
+    var cards = document.querySelectorAll('.scenario-card');
+    var btns = document.querySelectorAll('.filter-btn');
+    btns.forEach(function(b) { b.classList.remove('active'); });
+    event.target.classList.add('active');
+    cards.forEach(function(card) {
+        if (status === 'all') {
+            card.style.display = 'block';
+        } else {
+            var badge = card.querySelector('.badge');
+            if (badge && badge.textContent.toLowerCase() === status) {
+                card.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+            }
+        }
+    });
+}
+
+// Auto-expand failed scenarios
+document.querySelectorAll('.scenario-card').forEach(function(card) {
+    var badge = card.querySelector('.badge');
+    if (badge && (badge.textContent === 'FAIL' || badge.textContent === 'ERROR')) {
+        var body = card.querySelector('.scenario-body');
+        if (body) {
+            body.style.display = 'block';
+            body.classList.add('open');
+        }
+    }
+});
+</script>
+
+</body>
+</html>

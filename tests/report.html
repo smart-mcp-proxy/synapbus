@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SynapBus E2E Test Report</title>
+<style>
+:root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --border: #475569;
+    --green: #10b981;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+h2 { font-size: 1.3rem; margin-bottom: 1rem; color: var(--text-dim); }
+h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+h4 { font-size: 0.95rem; margin: 1rem 0 0.5rem; color: var(--text-dim); }
+
+.header {
+    text-align: center;
+    padding: 2rem 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2rem;
+}
+
+.header .subtitle {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 1.2rem;
+    text-align: center;
+}
+
+.stat-card .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.stat-card .stat-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+.stat-value.yellow { color: var(--yellow); }
+.stat-value.blue { color: var(--blue); }
+.stat-value.purple { color: var(--purple); }
+
+.filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.filter-btn {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.filter-btn:hover { background: var(--surface2); }
+.filter-btn.active { background: var(--blue); border-color: var(--blue); }
+
+.scenario-card {
+    background: var(--surface);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.scenario-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.2rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.scenario-header:hover { background: var(--surface2); }
+
+.scenario-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.scenario-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.meta-item {
+    white-space: nowrap;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: 0.05em;
+}
+
+.scenario-body {
+    padding: 0 1.2rem 1.2rem;
+    display: none;
+}
+
+.scenario-body.open { display: block; }
+
+.description {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+
+.agents-list {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.verification-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.verification-table th {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.verification-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+
+.error-block {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.error-block pre {
+    color: var(--red);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.8rem;
+}
+
+.agent-run {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.run-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.agent-name {
+    font-weight: 700;
+    color: var(--purple);
+    font-size: 0.95rem;
+}
+
+.run-meta {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.run-error {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--red);
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+details {
+    margin-bottom: 0.5rem;
+}
+
+summary {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 0.3rem 0;
+}
+
+summary:hover { color: var(--text); }
+
+pre {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    background: var(--surface2);
+    padding: 0.6rem;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 0.3rem;
+}
+
+.tool-call {
+    border-left: 3px solid var(--border);
+    padding: 0.3rem 0 0.3rem 0.8rem;
+    margin-bottom: 0.4rem;
+}
+
+.tool-call.tc-pass { border-left-color: var(--green); }
+.tool-call.tc-fail { border-left-color: var(--red); }
+
+.tc-header {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.2rem 0;
+}
+
+.tc-header:hover { color: var(--blue); }
+
+.tc-tool {
+    font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.tc-status { font-size: 0.75rem; }
+.tc-duration { font-size: 0.75rem; color: var(--text-dim); }
+
+.tc-body { padding: 0.5rem 0; }
+.tc-section { margin-bottom: 0.5rem; }
+.tc-section strong { font-size: 0.8rem; color: var(--text-dim); }
+
+.footer {
+    text-align: center;
+    padding: 2rem 0;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    margin-top: 2rem;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>SynapBus E2E Test Report</h1>
+    <p class="subtitle">Generated 2026-03-13 16:04:35 | Model: claude-sonnet-4-6 | Server: http://localhost:9090</p>
+</div>
+
+<div class="dashboard">
+    <div class="stat-card">
+        <div class="stat-value">1</div>
+        <div class="stat-label">Scenarios</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value green">1</div>
+        <div class="stat-label">Passed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value red">0</div>
+        <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value yellow">0</div>
+        <div class="stat-label">Errors</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value blue">31.2s</div>
+        <div class="stat-label">Duration</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple">11.3k / 1.3k</div>
+        <div class="stat-label">Tokens In/Out</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">$0.0536</div>
+        <div class="stat-label">Est. Cost</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">6</div>
+        <div class="stat-label">Tool Calls</div>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <button class="filter-btn active" onclick="filterScenarios('all')">All (1)</button>
+    <button class="filter-btn" onclick="filterScenarios('pass')">Passed (1)</button>
+    <button class="filter-btn" onclick="filterScenarios('fail')">Failed (0)</button>
+    <button class="filter-btn" onclick="filterScenarios('error')">Errors (0)</button>
+</div>
+
+<div id="scenarios">
+
+    <div class="scenario-card" style="border-left: 4px solid #10b981" id="scenario-0">
+        <div class="scenario-header" onclick="toggleSection('scenario-body-0')">
+            <div class="scenario-title">
+                <span class="badge" style="background:#10b981">PASS</span> <span>direct_messaging</span>
+            </div>
+            <div class="scenario-meta">
+                <span class="meta-item">31.2s</span>
+                <span class="meta-item">11.3k in / 1.3k out</span>
+                <span class="meta-item">$0.0536</span>
+                <span class="meta-item">2 agents</span>
+            </div>
+        </div>
+        <div class="scenario-body" id="scenario-body-0">
+            <p class="description">Two agents exchange direct messages: discover, send, read, claim, reply, mark done</p>
+            <div class="agents-list">Agents: dm_alice, dm_bob</div>
+            
+            <h4>Verifications</h4>
+            <table class="verification-table">
+                <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+                <tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice sent message to Bob</td><td class="mono">Found send_message tool call</td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob read inbox</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob claimed message</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob sent reply</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Bob marked done</td><td class="mono"></td></tr>
+<tr><td><span style="color:#10b981;font-weight:bold">PASS</span></td><td>Alice received reply from Bob</td><td class="mono">1 reply(ies) found</td></tr>
+            </table>
+            
+            
+            <div class="runs-section">
+                <h4>Agent Runs</h4>
+                
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">dm_alice</span>
+            <span class="run-meta">9.2s | 3.1k in / 427 out | 2 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Alice, a research agent on SynapBus. You communicate with other agents using the provided tools. Be concise. Complete your task in as few tool calls as possible.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>First, discover what other agents are available using discover_agents. Then send a message to &#x27;dm_bob&#x27; asking: &#x27;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&#x27; Use subject &#x27;MCP vs REST Analysis&#x27;.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>Here&#x27;s a summary of what happened:
+
+---
+
+### 🔍 Agent Discovery
+The discovery query for **&quot;agent communication&quot;** returned **no agents currently registered** on SynapBus. The network may be sparsely populated at the moment, or no agents have advertised that specific capability.
+
+---
+
+### ✉️ Message Sent to `dm_bob`
+The message was successfully delivered! Here are the details:
+
+| Field | Value |
+|---|---|
+| **Recipient** | `dm_bob` |
+| **Subject** | MCP vs REST Analysis |
+| **Body** | *What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?* |
+| **Message ID** | `1` |
+| **Conversation ID** | `1` |
+| **Status** | ✅ Pending |
+
+---
+
+The message is queued and awaiting `dm_bob`&#x27;s response. Would you like me to poll the inbox for a reply or do anything else in the...</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4502584496-1773410648140')">
+                <span class="tc-tool">discover_agents</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">62ms</span>
+            </div>
+            <div class="tc-body" id="tc-4502584496-1773410648140" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;query&quot;: &quot;agent communication&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;agents&quot;: [],
+  &quot;count&quot;: 0
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4504817168-1773410648189')">
+                <span class="tc-tool">send_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">49ms</span>
+            </div>
+            <div class="tc-body" id="tc-4504817168-1773410648189" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;to&quot;: &quot;dm_bob&quot;,
+  &quot;subject&quot;: &quot;MCP vs REST Analysis&quot;,
+  &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;conversation_id&quot;: 1,
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;pending&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+
+    <div class="agent-run">
+        <div class="run-header">
+            <span class="agent-name">dm_bob</span>
+            <span class="run-meta">21.3s | 8.2k in / 895 out | 4 tool calls</span>
+        </div>
+        
+        <div class="run-prompt">
+            <details>
+                <summary>Prompts</summary>
+                <div class="prompt-section">
+                    <strong>System:</strong>
+                    <pre>You are Bob, a data analyst agent on SynapBus. When you receive messages, process them and reply. Be concise and direct. Complete your task efficiently.</pre>
+                </div>
+                <div class="prompt-section">
+                    <strong>User:</strong>
+                    <pre>1. Check your inbox using read_inbox
+2. Claim the message using claim_messages
+3. Send a reply to &#x27;dm_alice&#x27; answering her question about MCP vs REST
+4. Mark the original message as done using mark_done with the message_id
+Do all steps.</pre>
+                </div>
+            </details>
+        </div>
+        <div class="run-response">
+            <details>
+                <summary>Response</summary>
+                <pre>All 4 steps completed! Here&#x27;s a summary:
+
+| Step | Action | Result |
+|------|--------|--------|
+| ✅ 1 | **Read Inbox** | Found 1 message from `dm_alice` asking about MCP vs REST |
+| ✅ 2 | **Claim Message** | Message ID `1` claimed and set to `processing` |
+| ✅ 3 | **Send Reply** | Detailed 3-point answer sent to `dm_alice` (new message ID: `2`) |
+| ✅ 4 | **Mark Done** | Original message ID `1` marked as `done` |
+
+The reply covered the three key trade-offs: **protocol overhead vs. simplicity**, **statefulness &amp; context management**, and **ecosystem &amp; interoperability**.</pre>
+            </details>
+        </div>
+        <div class="tool-calls">
+            
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4504817808-1773410657015')">
+                <span class="tc-tool">read_inbox</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">116ms</span>
+            </div>
+            <div class="tc-body" id="tc-4504817808-1773410657015" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 1,
+      &quot;conversation_id&quot;: 1,
+      &quot;from_agent&quot;: &quot;dm_alice&quot;,
+      &quot;to_agent&quot;: &quot;dm_bob&quot;,
+      &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;pending&quot;,
+      &quot;metadata&quot;: {},
+      &quot;created_at&quot;: &quot;2026-03-13T14:04:08Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T14:04:08Z&quot;
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4504704736-1773410657106')">
+                <span class="tc-tool">claim_messages</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">91ms</span>
+            </div>
+            <div class="tc-body" id="tc-4504704736-1773410657106" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;count&quot;: 1,
+  &quot;messages&quot;: [
+    {
+      &quot;id&quot;: 1,
+      &quot;conversation_id&quot;: 1,
+      &quot;from_agent&quot;: &quot;dm_alice&quot;,
+      &quot;to_agent&quot;: &quot;dm_bob&quot;,
+      &quot;body&quot;: &quot;What are the top 3 trade-offs of using MCP vs REST APIs for agent-to-agent communication?&quot;,
+      &quot;priority&quot;: 5,
+      &quot;status&quot;: &quot;processing&quot;,
+      &quot;metadata&quot;: {},
+      &quot;claimed_by&quot;: &quot;dm_bob&quot;,
+      &quot;claimed_at&quot;: &quot;2026-03-13T14:04:17Z&quot;,
+      &quot;created_at&quot;: &quot;2026-03-13T14:04:08Z&quot;,
+      &quot;updated_at&quot;: &quot;2026-03-13T14:04:17Z&quot;
+    }
+  ]
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4504707472-1773410668809')">
+                <span class="tc-tool">send_message</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">114ms</span>
+            </div>
+            <div class="tc-body" id="tc-4504707472-1773410668809" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;to&quot;: &quot;dm_alice&quot;,
+  &quot;subject&quot;: &quot;Re: MCP vs REST APIs for Agent-to-Agent Communication&quot;,
+  &quot;body&quot;: &quot;Hi Alice! Here are the top 3 trade-offs of MCP vs REST APIs for agent-to-agent communication:\n\n1. **Protocol Overhead vs. Simplicity**\n   - **MCP** is a purpose-built protocol for AI/agent contexts, offering structured tool-calling, context management, and session state natively \u2014 but this adds complexity and requires MCP-compatible infrastructure.\n   - **REST** is universally understo...</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;conversation_id&quot;: 2,
+  &quot;message_id&quot;: 2,
+  &quot;status&quot;: &quot;pending&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+
+        <div class="tool-call tc-pass">
+            <div class="tc-header" onclick="toggleSection('tc-4504682576-1773410670602')">
+                <span class="tc-tool">mark_done</span>
+                <span class="tc-status">OK</span>
+                <span class="tc-duration">109ms</span>
+            </div>
+            <div class="tc-body" id="tc-4504682576-1773410670602" style="display:none">
+                <div class="tc-section">
+                    <strong>Input:</strong>
+                    <pre>{
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;done&quot;
+}</pre>
+                </div>
+                <div class="tc-section">
+                    <strong>Output:</strong>
+                    <pre>{
+  &quot;message_id&quot;: 1,
+  &quot;status&quot;: &quot;done&quot;
+}</pre>
+                </div>
+            </div>
+        </div>
+        
+        </div>
+    </div>
+    
+            </div>
+        </div>
+    </div>
+    
+</div>
+
+<div class="footer">
+    SynapBus E2E Test Suite | Pass Rate: 100%
+</div>
+
+<script>
+function toggleSection(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.style.display === 'none' || !el.style.display) {
+        el.style.display = 'block';
+        el.classList.add('open');
+    } else {
+        el.style.display = 'none';
+        el.classList.remove('open');
+    }
+}
+
+function filterScenarios(status) {
+    var cards = document.querySelectorAll('.scenario-card');
+    var btns = document.querySelectorAll('.filter-btn');
+    btns.forEach(function(b) { b.classList.remove('active'); });
+    event.target.classList.add('active');
+    cards.forEach(function(card) {
+        if (status === 'all') {
+            card.style.display = 'block';
+        } else {
+            var badge = card.querySelector('.badge');
+            if (badge && badge.textContent.toLowerCase() === status) {
+                card.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+            }
+        }
+    });
+}
+
+// Auto-expand failed scenarios
+document.querySelectorAll('.scenario-card').forEach(function(card) {
+    var badge = card.querySelector('.badge');
+    if (badge && (badge.textContent === 'FAIL' || badge.textContent === 'ERROR')) {
+        var body = card.querySelector('.scenario-body');
+        if (body) {
+            body.style.display = 'block';
+            body.classList.add('open');
+        }
+    }
+});
+</script>
+
+</body>
+</html>

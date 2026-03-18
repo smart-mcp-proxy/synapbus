@@ -33,6 +33,7 @@ type Channel struct {
 	IsPrivate              bool      `json:"is_private"`
 	IsSystem               bool      `json:"is_system"`
 	CreatedBy              string    `json:"created_by"`
+	WorkflowEnabled        bool      `json:"workflow_enabled"`
 	AutoApprove            bool      `json:"auto_approve"`
 	StalemateRemindAfter   string    `json:"stalemate_remind_after"`
 	StalemateEscalateAfter string    `json:"stalemate_escalate_after"`
@@ -112,6 +113,7 @@ type JoinChannelRequest struct {
 
 // ChannelSettings holds workflow-related settings for a channel.
 type ChannelSettings struct {
+	WorkflowEnabled        bool   `json:"workflow_enabled"`
 	AutoApprove            bool   `json:"auto_approve"`
 	StalemateRemindAfter   string `json:"stalemate_remind_after"`
 	StalemateEscalateAfter string `json:"stalemate_escalate_after"`
