@@ -105,6 +105,7 @@ make lint           # Run linters
 - SQLite (existing DB, 1 new migration for push_subscriptions), localStorage (font size) (008-webui-pwa-analytics)
 - Go 1.25+ (backend), Svelte 5 + Tailwind (frontend) + go-chi/chi (HTTP), mark3labs/mcp-go (MCP), modernc.org/sqlite (storage), spf13/cobra (CLI) (009-attachments-threads)
 - SQLite (modernc.org/sqlite, pure Go) + content-addressable filesystem (SHA-256) (009-attachments-threads)
+- SQLite (modernc.org/sqlite, pure Go) — new migration 013_reactions.sql (010-reactions-workflows)
 
 ## Recent Changes
 - 002-mcp-auth-ux-polish: Added Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI)

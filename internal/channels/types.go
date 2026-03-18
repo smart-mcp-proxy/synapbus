@@ -25,16 +25,19 @@ const (
 
 // Channel represents a named group communication space.
 type Channel struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Topic       string    `json:"topic"`
-	Type        string    `json:"type"`
-	IsPrivate   bool      `json:"is_private"`
-	IsSystem    bool      `json:"is_system"`
-	CreatedBy   string    `json:"created_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                     int64     `json:"id"`
+	Name                   string    `json:"name"`
+	Description            string    `json:"description"`
+	Topic                  string    `json:"topic"`
+	Type                   string    `json:"type"`
+	IsPrivate              bool      `json:"is_private"`
+	IsSystem               bool      `json:"is_system"`
+	CreatedBy              string    `json:"created_by"`
+	AutoApprove            bool      `json:"auto_approve"`
+	StalemateRemindAfter   string    `json:"stalemate_remind_after"`
+	StalemateEscalateAfter string    `json:"stalemate_escalate_after"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // ChannelWithCount embeds Channel and adds a member count.
@@ -105,6 +108,13 @@ type UpdateChannelRequest struct {
 type JoinChannelRequest struct {
 	ChannelID int64  `json:"channel_id"`
 	AgentName string `json:"agent_name"`
+}
+
+// ChannelSettings holds workflow-related settings for a channel.
+type ChannelSettings struct {
+	AutoApprove            bool   `json:"auto_approve"`
+	StalemateRemindAfter   string `json:"stalemate_remind_after"`
+	StalemateEscalateAfter string `json:"stalemate_escalate_after"`
 }
 
 // InviteRequest is the input for inviting an agent to a channel.

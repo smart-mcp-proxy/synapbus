@@ -18,6 +18,7 @@ import (
 	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/jsruntime"
 	"github.com/synapbus/synapbus/internal/messaging"
+	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/search"
 )
 
@@ -29,6 +30,7 @@ type HybridToolRegistrar struct {
 	swarmService      *channels.SwarmService
 	attachmentService *attachments.Service
 	searchService     *search.Service
+	reactionService   *reactions.Service
 	jsPool            *jsruntime.Pool
 	actionRegistry    *actions.Registry
 	actionIndex       *actions.Index
@@ -44,6 +46,7 @@ func NewHybridToolRegistrar(
 	swarmService *channels.SwarmService,
 	attachmentService *attachments.Service,
 	searchService *search.Service,
+	reactionService *reactions.Service,
 	jsPool *jsruntime.Pool,
 	actionRegistry *actions.Registry,
 	actionIndex *actions.Index,
@@ -56,6 +59,7 @@ func NewHybridToolRegistrar(
 		swarmService:      swarmService,
 		attachmentService: attachmentService,
 		searchService:     searchService,
+		reactionService:   reactionService,
 		jsPool:            jsPool,
 		actionRegistry:    actionRegistry,
 		actionIndex:       actionIndex,
@@ -475,6 +479,7 @@ func (h *HybridToolRegistrar) handleExecute(ctx context.Context, req mcplib.Call
 		h.swarmService,
 		h.attachmentService,
 		h.searchService,
+		h.reactionService,
 		agentName,
 	)
 

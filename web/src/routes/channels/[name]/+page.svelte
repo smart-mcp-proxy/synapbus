@@ -5,6 +5,8 @@
 	import { notifications } from '$lib/stores/notifications';
 	import MessageBody from '$lib/components/MessageBody.svelte';
 	import AttachmentPreview from '$lib/components/AttachmentPreview.svelte';
+	import WorkflowBadge from '$lib/components/WorkflowBadge.svelte';
+	import ReactionPills from '$lib/components/ReactionPills.svelte';
 
 	let channel = $state<any>(null);
 	let members = $state<any[]>([]);
@@ -306,6 +308,10 @@
 												<span class="text-xs text-text-secondary">{formatTime(msg.created_at)}</span>
 											</div>
 											<div class="text-sm text-text-primary/90 leading-relaxed"><MessageBody body={msg.body} /></div>
+											{#if msg.workflow_state}
+												<WorkflowBadge state={msg.workflow_state} />
+											{/if}
+											<ReactionPills reactions={msg.reactions ?? []} messageId={msg.id} />
 											{#if msg.attachments?.length > 0}
 												<div class="flex flex-wrap gap-2 mt-1.5">
 													{#each msg.attachments as att}

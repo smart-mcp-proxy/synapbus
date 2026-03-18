@@ -636,7 +636,46 @@ func addAdminCommands(rootCmd *cobra.Command) {
 	channelsJoinCmd.MarkFlagRequired("channel")
 	channelsJoinCmd.MarkFlagRequired("agent")
 
-	channelsCmd.AddCommand(channelsListCmd, channelsShowCmd, channelsCreateCmd, channelsJoinCmd)
+	var (
+		channelsUpdateName               string
+		channelsUpdateAutoApprove        string
+		channelsUpdateStalemateRemind    string
+		channelsUpdateStalemateEscalate  string
+	)
+	channelsUpdateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update channel settings (auto-approve, stalemate timers)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if channelsUpdateName == "" {
+				return fmt.Errorf("--name is required")
+			}
+			reqArgs := map[string]interface{}{
+				"name": channelsUpdateName,
+			}
+			if cmd.Flags().Changed("auto-approve") {
+				reqArgs["auto_approve"] = channelsUpdateAutoApprove == "true"
+			}
+			if cmd.Flags().Changed("stalemate-remind-after") {
+				reqArgs["stalemate_remind_after"] = channelsUpdateStalemateRemind
+			}
+			if cmd.Flags().Changed("stalemate-escalate-after") {
+				reqArgs["stalemate_escalate_after"] = channelsUpdateStalemateEscalate
+			}
+			resp, err := adminRequest("channels.update_settings", reqArgs)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	channelsUpdateCmd.Flags().StringVar(&channelsUpdateName, "name", "", "Channel name")
+	channelsUpdateCmd.Flags().StringVar(&channelsUpdateAutoApprove, "auto-approve", "", "Auto-approve messages (true|false)")
+	channelsUpdateCmd.Flags().StringVar(&channelsUpdateStalemateRemind, "stalemate-remind-after", "", "Stalemate reminder duration (e.g. 24h)")
+	channelsUpdateCmd.Flags().StringVar(&channelsUpdateStalemateEscalate, "stalemate-escalate-after", "", "Stalemate escalation duration (e.g. 72h)")
+	channelsUpdateCmd.MarkFlagRequired("name")
+
+	channelsCmd.AddCommand(channelsListCmd, channelsShowCmd, channelsCreateCmd, channelsJoinCmd, channelsUpdateCmd)
 
 	// ----- conversations commands -----
 	conversationsCmd := &cobra.Command{

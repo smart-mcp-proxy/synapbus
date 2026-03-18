@@ -6,10 +6,10 @@ type Registry struct {
 	ordered []Action // maintains insertion order
 }
 
-// NewRegistry creates a registry pre-populated with all 23 agent-callable actions.
+// NewRegistry creates a registry pre-populated with all 27 agent-callable actions.
 func NewRegistry() *Registry {
 	r := &Registry{
-		actions: make(map[string]Action, 23),
+		actions: make(map[string]Action, 27),
 	}
 	for _, a := range allActions() {
 		r.actions[a.Name] = a
@@ -42,7 +42,7 @@ func (r *Registry) ListByCategory(category string) []Action {
 	return out
 }
 
-// allActions returns the canonical list of all 23 agent-callable actions.
+// allActions returns the canonical list of all 27 agent-callable actions.
 func allActions() []Action {
 	return []Action{
 		// ── Messaging (7 actions) ──────────────────────────────────────
@@ -452,6 +452,76 @@ func allActions() []Action {
 				{
 					Description: "Download an attachment by hash",
 					Code:        `call("download_attachment", {"hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"})`,
+				},
+			},
+		},
+
+		// ── Reactions (4 actions) ────────────────────────────────────
+		{
+			Name:        "react",
+			Category:    "reactions",
+			Description: "Add or toggle a reaction on a message. Valid reactions: approve, reject, in_progress, done, published. Adding the same reaction again removes it (toggle).",
+			Params: []Param{
+				{Name: "message_id", Type: "number", Description: "ID of the message to react to", Required: true},
+				{Name: "reaction", Type: "string", Description: "Reaction type: approve, reject, in_progress, done, published", Required: true},
+				{Name: "metadata", Type: "string", Description: "JSON metadata object (optional)"},
+			},
+			Returns: "JSON with action ('added' or 'removed') and reaction details",
+			Examples: []Example{
+				{
+					Description: "Approve a message",
+					Code:        `call("react", {"message_id": 42, "reaction": "approve"})`,
+				},
+				{
+					Description: "Toggle a reaction off (call same reaction again)",
+					Code:        `call("react", {"message_id": 42, "reaction": "approve"})`,
+				},
+			},
+		},
+		{
+			Name:        "unreact",
+			Category:    "reactions",
+			Description: "Remove a specific reaction from a message.",
+			Params: []Param{
+				{Name: "message_id", Type: "number", Description: "ID of the message to remove reaction from", Required: true},
+				{Name: "reaction", Type: "string", Description: "Reaction type to remove: approve, reject, in_progress, done, published", Required: true},
+			},
+			Returns: "JSON with message_id, reaction, and status 'removed'",
+			Examples: []Example{
+				{
+					Description: "Remove an approval reaction",
+					Code:        `call("unreact", {"message_id": 42, "reaction": "approve"})`,
+				},
+			},
+		},
+		{
+			Name:        "get_reactions",
+			Category:    "reactions",
+			Description: "Get all reactions on a message and its derived workflow state.",
+			Params: []Param{
+				{Name: "message_id", Type: "number", Description: "ID of the message to get reactions for", Required: true},
+			},
+			Returns: "JSON with reactions array and workflow_state",
+			Examples: []Example{
+				{
+					Description: "Get reactions and workflow state for a message",
+					Code:        `call("get_reactions", {"message_id": 42})`,
+				},
+			},
+		},
+		{
+			Name:        "list_by_state",
+			Category:    "reactions",
+			Description: "List messages in a channel filtered by workflow state. Valid states: proposed, approved, in_progress, rejected, done, published.",
+			Params: []Param{
+				{Name: "channel", Type: "string", Description: "Channel name", Required: true},
+				{Name: "state", Type: "string", Description: "Workflow state to filter by: proposed, approved, in_progress, rejected, done, published", Required: true},
+			},
+			Returns: "JSON with message_ids array and count",
+			Examples: []Example{
+				{
+					Description: "List approved messages in a channel",
+					Code:        `call("list_by_state", {"channel": "approvals", "state": "approved"})`,
 				},
 			},
 		},

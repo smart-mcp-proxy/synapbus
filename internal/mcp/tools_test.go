@@ -68,6 +68,7 @@ func newTestHybridRegistrar(t *testing.T) (*HybridToolRegistrar, *messaging.Mess
 		nil, // swarmService
 		nil, // attachmentService
 		nil, // searchService
+		nil, // reactionService
 		jsPool,
 		actionRegistry,
 		actionIndex,
