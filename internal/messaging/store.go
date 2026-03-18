@@ -669,7 +669,7 @@ func (s *SQLiteMessageStore) GetDMMessages(ctx context.Context, agents []string,
 		 FROM messages
 		 WHERE channel_id IS NULL
 		   AND ((from_agent IN (%s) AND to_agent = ?) OR (from_agent = ? AND to_agent IN (%s)))
-		 ORDER BY created_at ASC
+		 ORDER BY created_at DESC
 		 LIMIT ?`,
 		inClause, inClause,
 	)

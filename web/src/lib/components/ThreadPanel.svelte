@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { activeThread, closeThread } from '$lib/stores/thread';
-	import { conversations as convsApi, messages as messagesApi } from '$lib/api/client';
+	import { messages as messagesApi } from '$lib/api/client';
 	import MessageBody from '$lib/components/MessageBody.svelte';
 	import AttachmentPreview from '$lib/components/AttachmentPreview.svelte';
 
-	let conversation = $state<any>(null);
-	let threadMessages = $state<any[]>([]);
+	let parentMessage = $state<any>(null);
+	let threadReplies = $state<any[]>([]);
 	let loadingThread = $state(false);
 	let replyBody = $state('');
 	let sending = $state(false);
@@ -20,20 +20,24 @@
 		error = '';
 		replyBody = '';
 		if (val) {
-			loadThread(val.conversationId);
+			loadThread(val.messageId);
 		} else {
-			conversation = null;
-			threadMessages = [];
+			parentMessage = null;
+			threadReplies = [];
 		}
 	});
 
-	async function loadThread(conversationId: number) {
+	async function loadThread(messageId: number) {
 		loadingThread = true;
 		loadError = '';
 		try {
-			const res = await convsApi.get(conversationId);
-			conversation = res.conversation;
-			threadMessages = res.messages;
+			// Load parent message and its replies separately
+			const [msgRes, repliesRes] = await Promise.all([
+				messagesApi.get(messageId),
+				messagesApi.getReplies(messageId)
+			]);
+			parentMessage = msgRes;
+			threadReplies = repliesRes.replies || [];
 		} catch (err: any) {
 			loadError = err.message || 'Could not load thread';
 		} finally {
@@ -45,28 +49,27 @@
 		e.preventDefault();
 		if (!replyBody.trim() || !currentThread) return;
 
-		// Determine recipient: use last message's sender, or fallback to stored fromAgent
-		const recipient = threadMessages.length > 0
-			? threadMessages[threadMessages.length - 1].from_agent
-			: currentThread.fromAgent;
-
-		if (!recipient) {
-			error = 'Cannot determine recipient';
-			return;
-		}
-
 		sending = true;
 		error = '';
 		try {
-			await messagesApi.send({
-				to: recipient,
-				body: replyBody.trim(),
-				reply_to: currentThread.messageId,
-				conversation_id: currentThread.conversationId,
-				subject: conversation?.subject
-			});
+			// For channel messages, send as channel message with reply_to
+			if (parentMessage?.channel_id) {
+				await messagesApi.send({
+					body: replyBody.trim(),
+					channel_id: parentMessage.channel_id,
+					reply_to: currentThread.messageId
+				});
+			} else {
+				// For DMs, send to the other party
+				const recipient = parentMessage?.from_agent || currentThread.fromAgent;
+				await messagesApi.send({
+					to: recipient,
+					body: replyBody.trim(),
+					reply_to: currentThread.messageId
+				});
+			}
 			replyBody = '';
-			await loadThread(currentThread.conversationId);
+			await loadThread(currentThread.messageId);
 		} catch (err: any) {
 			error = err.message || 'Failed to send reply';
 		} finally {
@@ -101,6 +104,11 @@
 			if (form) form.requestSubmit();
 		}
 	}
+
+	// Combine parent + replies for display
+	let allMessages = $derived(
+		parentMessage ? [parentMessage, ...threadReplies] : threadReplies
+	);
 </script>
 
 {#if currentThread}
@@ -109,11 +117,13 @@
 		<div class="flex items-center justify-between h-12 px-4 border-b border-border flex-shrink-0">
 			<div class="min-w-0">
 				<h3 class="font-display font-bold text-sm text-text-primary truncate">Thread</h3>
-				{#if conversation}
-					<p class="text-[10px] text-text-secondary truncate">{conversation.subject || 'Conversation #' + conversation.id}</p>
-				{:else if currentThread.fromAgent}
-					<p class="text-[10px] text-text-secondary truncate">Reply to {currentThread.fromAgent}</p>
-				{/if}
+				<p class="text-[10px] text-text-secondary truncate">
+					{#if parentMessage}
+						{threadReplies.length} {threadReplies.length === 1 ? 'reply' : 'replies'}
+					{:else}
+						Loading...
+					{/if}
+				</p>
 			</div>
 			<button
 				class="p-1.5 rounded hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
@@ -143,14 +153,14 @@
 			{:else if loadError}
 				<div class="p-4 text-center text-text-secondary text-xs">
 					<p>Thread history unavailable</p>
-					<p class="mt-1 text-[10px]">You can still send a reply below</p>
+					<p class="mt-1 text-[10px]">{loadError}</p>
 				</div>
-			{:else if threadMessages.length === 0}
+			{:else if allMessages.length === 0}
 				<div class="p-4 text-center text-text-secondary text-xs">
 					No messages in this thread yet
 				</div>
 			{:else}
-				{#each threadMessages as msg, i (msg.id)}
+				{#each allMessages as msg, i (msg.id)}
 					<div class="px-4 py-3 hover:bg-bg-tertiary/50 transition-colors {i === 0 ? 'border-b border-border bg-bg-primary/30' : ''}">
 						<div class="flex gap-2.5">
 							<div class="w-7 h-7 rounded-full bg-bg-tertiary flex items-center justify-center text-[11px] font-bold text-text-secondary flex-shrink-0">
@@ -160,7 +170,7 @@
 								<div class="flex items-center gap-2 mb-0.5">
 									<span class="font-semibold text-xs text-text-primary">{msg.from_agent}</span>
 									<span class="text-[10px] text-text-secondary">{formatTime(msg.created_at)}</span>
-									{#if msg.status !== 'done'}
+									{#if msg.status && msg.status !== 'done' && msg.status !== 'pending'}
 										<span class="{statusClass(msg.status)} text-[10px]">{msg.status}</span>
 									{/if}
 								</div>

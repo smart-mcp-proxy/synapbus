@@ -62,6 +62,7 @@ export const messages = {
 		return request<{ messages: any[]; total: number }>('GET', `/api/messages${q ? '?' + q : ''}`);
 	},
 	get: (id: number) => request<any>('GET', `/api/messages/${id}`),
+	getReplies: (id: number) => request<{ replies: any[]; total: number }>('GET', `/api/messages/${id}/replies`),
 	send: (body: { from?: string; to?: string; body: string; priority?: number; subject?: string; channel_id?: number; conversation_id?: number; reply_to?: number; attachments?: string[] }) =>
 		request<any>('POST', '/api/messages', body),
 	markDone: (id: number) => request<{ status: string }>('POST', `/api/messages/${id}/done`),

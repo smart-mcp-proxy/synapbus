@@ -564,6 +564,11 @@ func (h *MessagesHandler) DMMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reverse to chronological order (query returns newest first for correct LIMIT behavior)
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+
 	h.msgService.EnrichMessages(r.Context(), msgs)
 
 	// Include last_read_message_id for the human agent's DM with the peer
