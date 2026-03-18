@@ -478,3 +478,345 @@ func TestFormatAge(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeWorkflowStateFromReactions(t *testing.T) {
+	tests := []struct {
+		name      string
+		reactions []reactionRow
+		want      string
+	}{
+		{"no reactions = proposed", nil, "proposed"},
+		{"approve only", []reactionRow{{Reaction: "approve"}}, "approved"},
+		{"in_progress only", []reactionRow{{Reaction: "in_progress"}}, "in_progress"},
+		{"reject only", []reactionRow{{Reaction: "reject"}}, "rejected"},
+		{"done only", []reactionRow{{Reaction: "done"}}, "done"},
+		{"published only", []reactionRow{{Reaction: "published"}}, "published"},
+		{"approve + in_progress = in_progress (higher priority)", []reactionRow{
+			{Reaction: "approve"},
+			{Reaction: "in_progress"},
+		}, "in_progress"},
+		{"approve + done = done", []reactionRow{
+			{Reaction: "approve"},
+			{Reaction: "done"},
+		}, "done"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeWorkflowStateFromReactions(tt.reactions)
+			if got != tt.want {
+				t.Errorf("computeWorkflowStateFromReactions() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTerminalWorkflowState(t *testing.T) {
+	tests := []struct {
+		state    string
+		terminal bool
+	}{
+		{"proposed", false},
+		{"approved", false},
+		{"in_progress", false},
+		{"rejected", true},
+		{"done", true},
+		{"published", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			got := isTerminalWorkflowState(tt.state)
+			if got != tt.terminal {
+				t.Errorf("isTerminalWorkflowState(%q) = %v, want %v", tt.state, got, tt.terminal)
+			}
+		})
+	}
+}
+
+func TestStalemateWorker_WorkflowReminder(t *testing.T) {
+	svc, db := newStalemateTestService(t)
+	ctx := context.Background()
+
+	// Create a workflow-enabled channel with short timeouts
+	_, err := db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, workflow_enabled, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at)
+		 VALUES (10, 'news-test', 'Test news channel', '', 'standard', 0, 0, 'system', 1, '1s', '72h', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatalf("create workflow channel: %v", err)
+	}
+
+	// Add system and sender as members
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'system', 'owner', CURRENT_TIMESTAMP)`)
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'sender', 'member', CURRENT_TIMESTAMP)`)
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'receiver', 'member', CURRENT_TIMESTAMP)`)
+
+	// Insert a channel message with old created_at (will be in "proposed" state since no reactions)
+	oldTime := time.Now().Add(-2 * time.Second)
+	convResult, err := db.Exec(
+		`INSERT INTO conversations (subject, created_by, created_at, updated_at) VALUES ('wf-test', 'sender', ?, ?)`,
+		oldTime, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert conversation: %v", err)
+	}
+	convID, _ := convResult.LastInsertId()
+
+	channelID := int64(10)
+	_, err = db.Exec(
+		`INSERT INTO messages (conversation_id, from_agent, to_agent, body, priority, status, metadata, channel_id, created_at, updated_at)
+		 VALUES (?, 'sender', '', 'Draft blog post about MCP', 5, 'pending', '{}', ?, ?, ?)`,
+		convID, channelID, oldTime, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert channel message: %v", err)
+	}
+
+	// Wait for the timeout to elapse
+	time.Sleep(10 * time.Millisecond)
+
+	config := DefaultStalemateConfig()
+	lookup := &stubChannelLookup{channelID: 0, err: fmt.Errorf("no approvals channel")}
+	worker := NewStalemateWorker(db, svc, lookup, config)
+
+	worker.checkStaleMessages(ctx)
+
+	// Verify workflow stalemate reminders were sent to channel members
+	var count int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'system' AND body LIKE '%STALE%'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("query workflow reminders: %v", err)
+	}
+	// Should have sent reminders to all 3 members (system, sender, receiver)
+	if count < 1 {
+		t.Errorf("expected at least 1 workflow reminder, got %d", count)
+	}
+}
+
+func TestStalemateWorker_WorkflowEscalation(t *testing.T) {
+	svc, db := newStalemateTestService(t)
+	ctx := context.Background()
+
+	// Create a workflow-enabled channel with short escalation timeout
+	_, err := db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, workflow_enabled, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at)
+		 VALUES (10, 'news-test', 'Test news channel', '', 'standard', 0, 0, 'system', 1, '1s', '1s', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatalf("create workflow channel: %v", err)
+	}
+
+	// Create #approvals channel
+	db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, created_at, updated_at)
+		 VALUES (20, 'approvals', 'Approval queue', '', 'standard', 0, 0, 'system', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (20, 'system', 'owner', CURRENT_TIMESTAMP)`)
+
+	// Add members to workflow channel
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'sender', 'member', CURRENT_TIMESTAMP)`)
+
+	// Insert a channel message old enough to trigger escalation
+	oldTime := time.Now().Add(-2 * time.Second)
+	convResult, _ := db.Exec(
+		`INSERT INTO conversations (subject, created_by, created_at, updated_at) VALUES ('wf-esc', 'sender', ?, ?)`,
+		oldTime, oldTime,
+	)
+	convID, _ := convResult.LastInsertId()
+
+	channelID := int64(10)
+	_, err = db.Exec(
+		`INSERT INTO messages (conversation_id, from_agent, to_agent, body, priority, status, metadata, channel_id, created_at, updated_at)
+		 VALUES (?, 'sender', '', 'Stale proposal needing attention', 5, 'pending', '{}', ?, ?, ?)`,
+		convID, channelID, oldTime, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert channel message: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	config := DefaultStalemateConfig()
+	lookup := &stubChannelLookup{channelID: 20}
+	worker := NewStalemateWorker(db, svc, lookup, config)
+
+	worker.checkStaleMessages(ctx)
+
+	// Verify escalation was sent to #approvals
+	var count int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'system' AND channel_id = 20 AND body LIKE '%STALE%'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("query workflow escalation: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 workflow escalation, got %d", count)
+	}
+}
+
+func TestStalemateWorker_WorkflowTerminalStateSkip(t *testing.T) {
+	svc, db := newStalemateTestService(t)
+	ctx := context.Background()
+
+	// Create a workflow-enabled channel with short timeouts
+	_, err := db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, workflow_enabled, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at)
+		 VALUES (10, 'news-test', 'Test news channel', '', 'standard', 0, 0, 'system', 1, '1s', '1s', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatalf("create workflow channel: %v", err)
+	}
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'sender', 'member', CURRENT_TIMESTAMP)`)
+
+	// Insert a channel message
+	oldTime := time.Now().Add(-2 * time.Second)
+	convResult, _ := db.Exec(
+		`INSERT INTO conversations (subject, created_by, created_at, updated_at) VALUES ('wf-done', 'sender', ?, ?)`,
+		oldTime, oldTime,
+	)
+	convID, _ := convResult.LastInsertId()
+
+	channelID := int64(10)
+	msgResult, err := db.Exec(
+		`INSERT INTO messages (conversation_id, from_agent, to_agent, body, priority, status, metadata, channel_id, created_at, updated_at)
+		 VALUES (?, 'sender', '', 'Completed task', 5, 'pending', '{}', ?, ?, ?)`,
+		convID, channelID, oldTime, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert channel message: %v", err)
+	}
+	msgID, _ := msgResult.LastInsertId()
+
+	// Add a "done" reaction — puts it in terminal state
+	_, err = db.Exec(
+		`INSERT INTO message_reactions (message_id, agent_name, reaction, metadata, created_at)
+		 VALUES (?, 'sender', 'done', '{}', ?)`,
+		msgID, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert reaction: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	config := DefaultStalemateConfig()
+	lookup := &stubChannelLookup{channelID: 0, err: fmt.Errorf("no approvals")}
+	worker := NewStalemateWorker(db, svc, lookup, config)
+
+	worker.checkStaleMessages(ctx)
+
+	// Verify NO reminders were sent (message is in terminal "done" state)
+	var count int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'system' AND body LIKE '%STALE%'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("query reminders: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 reminders for terminal state message, got %d", count)
+	}
+}
+
+func TestStalemateWorker_WorkflowDuplicateReminderPrevention(t *testing.T) {
+	svc, db := newStalemateTestService(t)
+	ctx := context.Background()
+
+	// Create a workflow-enabled channel with short timeout
+	_, err := db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, workflow_enabled, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at)
+		 VALUES (10, 'news-test', 'Test', '', 'standard', 0, 0, 'system', 1, '1s', '72h', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatalf("create workflow channel: %v", err)
+	}
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'receiver', 'member', CURRENT_TIMESTAMP)`)
+
+	// Insert a channel message
+	oldTime := time.Now().Add(-2 * time.Second)
+	convResult, _ := db.Exec(
+		`INSERT INTO conversations (subject, created_by, created_at, updated_at) VALUES ('wf-dup', 'sender', ?, ?)`,
+		oldTime, oldTime,
+	)
+	convID, _ := convResult.LastInsertId()
+
+	channelID := int64(10)
+	_, err = db.Exec(
+		`INSERT INTO messages (conversation_id, from_agent, to_agent, body, priority, status, metadata, channel_id, created_at, updated_at)
+		 VALUES (?, 'sender', '', 'Needs review', 5, 'pending', '{}', ?, ?, ?)`,
+		convID, channelID, oldTime, oldTime,
+	)
+	if err != nil {
+		t.Fatalf("insert channel message: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	config := DefaultStalemateConfig()
+	lookup := &stubChannelLookup{channelID: 0, err: fmt.Errorf("no approvals")}
+	worker := NewStalemateWorker(db, svc, lookup, config)
+
+	// Run twice
+	worker.checkStaleMessages(ctx)
+	worker.checkStaleMessages(ctx)
+
+	// Verify only one set of reminders was sent (no duplicates)
+	var count int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'system' AND to_agent = 'receiver' AND body LIKE '%STALE%'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("query reminders: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 reminder (no duplicates), got %d", count)
+	}
+}
+
+func TestStalemateWorker_WorkflowNonWorkflowChannelSkip(t *testing.T) {
+	svc, db := newStalemateTestService(t)
+	ctx := context.Background()
+
+	// Create a channel with workflow DISABLED
+	_, err := db.Exec(
+		`INSERT INTO channels (id, name, description, topic, type, is_private, is_system, created_by, workflow_enabled, stalemate_remind_after, stalemate_escalate_after, created_at, updated_at)
+		 VALUES (10, 'general', 'General', '', 'standard', 0, 0, 'system', 0, '1s', '1s', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	db.Exec(`INSERT INTO channel_members (channel_id, agent_name, role, joined_at) VALUES (10, 'sender', 'member', CURRENT_TIMESTAMP)`)
+
+	// Insert a channel message
+	oldTime := time.Now().Add(-2 * time.Second)
+	convResult, _ := db.Exec(
+		`INSERT INTO conversations (subject, created_by, created_at, updated_at) VALUES ('no-wf', 'sender', ?, ?)`,
+		oldTime, oldTime,
+	)
+	convID, _ := convResult.LastInsertId()
+
+	channelID := int64(10)
+	db.Exec(
+		`INSERT INTO messages (conversation_id, from_agent, to_agent, body, priority, status, metadata, channel_id, created_at, updated_at)
+		 VALUES (?, 'sender', '', 'No workflow here', 5, 'pending', '{}', ?, ?, ?)`,
+		convID, channelID, oldTime, oldTime,
+	)
+
+	time.Sleep(10 * time.Millisecond)
+
+	config := DefaultStalemateConfig()
+	lookup := &stubChannelLookup{channelID: 0, err: fmt.Errorf("no approvals")}
+	worker := NewStalemateWorker(db, svc, lookup, config)
+
+	worker.checkStaleMessages(ctx)
+
+	// Verify NO reminders — channel is not workflow-enabled
+	var count int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'system' AND body LIKE '%STALE%'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("query reminders: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 reminders for non-workflow channel, got %d", count)
+	}
+}
