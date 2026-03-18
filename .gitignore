@@ -44,3 +44,4 @@ __pycache__/
 # Debug
 __debug_bin*
 .claude/worktrees/
+synapbus-linux-amd64
