@@ -42,6 +42,7 @@ type RouterConfig struct {
 	SessionMiddleware func(http.Handler) http.Handler
 	DB                *sql.DB
 	Version           string
+	BaseURL           string
 }
 
 // NewRouter creates a chi router with all API routes configured.
@@ -244,6 +245,23 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 			r.Use(authMiddleware)
 
 			r.Get("/api/trust/{name}", trustHandler.GetScores)
+		})
+	}
+
+	// Onboarding (CLAUDE.md generator, MCP config, archetypes, skills)
+	if cfg.AgentService != nil {
+		onboardingHandler := NewOnboardingHandler(cfg.AgentService, cfg.ChannelService, cfg.BaseURL)
+
+		// Unauthenticated: archetypes list, skills list, skill content
+		r.Get("/api/archetypes", onboardingHandler.ListArchetypes)
+		r.Get("/api/skills", onboardingHandler.ListSkills)
+		r.Get("/api/skills/{name}", onboardingHandler.GetSkill)
+
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware)
+
+			r.Get("/api/agents/{name}/claude-md", onboardingHandler.GetCLAUDEMD)
+			r.Get("/api/agents/{name}/mcp-config", onboardingHandler.GetMCPConfig)
 		})
 	}
 
