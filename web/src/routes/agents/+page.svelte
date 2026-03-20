@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { agents as agentsApi } from '$lib/api/client';
+	import { agents as agentsApi, onboarding } from '$lib/api/client';
 	import { user } from '$lib/stores/auth';
 	import AgentCard from '$lib/components/AgentCard.svelte';
 
@@ -9,10 +9,25 @@
 
 	let newName = $state('');
 	let newDisplayName = $state('');
+	let newArchetype = $state('');
 	let registering = $state(false);
 	let registerError = $state('');
 	let newApiKey = $state('');
 	let copiedField = $state('');
+	let showQuickStart = $state(false);
+	let claudeMdContent = $state('');
+	let mcpConfigContent = $state<any>(null);
+	let loadingOnboarding = $state(false);
+
+	const archetypes = [
+		{ value: '', label: 'Select archetype...', icon: '' },
+		{ value: 'researcher', label: 'Researcher', icon: '🔍' },
+		{ value: 'writer', label: 'Writer', icon: '✍️' },
+		{ value: 'commenter', label: 'Commenter', icon: '💬' },
+		{ value: 'monitor', label: 'Monitor', icon: '📡' },
+		{ value: 'operator', label: 'Operator', icon: '⚙️' },
+		{ value: 'custom', label: 'Custom', icon: '🧩' }
+	];
 
 	type ClientId = 'claude-code' | 'gemini' | 'cursor' | 'windsurf' | 'vscode' | 'claude-desktop';
 	type AuthMode = 'apikey' | 'oauth';
@@ -134,13 +149,17 @@
 		registerError = '';
 		newApiKey = '';
 		try {
+			const capabilities = newArchetype ? { archetype: newArchetype } : undefined;
 			const res = await agentsApi.register({
 				name: newName.trim(),
 				display_name: newDisplayName.trim() || undefined,
-				type: 'ai'
+				type: 'ai',
+				capabilities
 			});
 			newApiKey = res.api_key;
 			await loadAgents();
+			// Load onboarding data for quick start
+			loadOnboardingData(newName.trim());
 		} catch (err: any) {
 			registerError = err.message || 'Failed to register agent';
 		} finally {
@@ -148,14 +167,54 @@
 		}
 	}
 
+	async function loadOnboardingData(agentName: string) {
+		loadingOnboarding = true;
+		try {
+			const [claudeMd, mcpConfig] = await Promise.allSettled([
+				onboarding.claudeMd(agentName, newArchetype || undefined),
+				onboarding.mcpConfig(agentName)
+			]);
+			claudeMdContent = claudeMd.status === 'fulfilled' ? claudeMd.value : '';
+			mcpConfigContent = mcpConfig.status === 'fulfilled' ? (mcpConfig.value as any).config : null;
+		} catch {
+			// Endpoints may not exist yet
+		} finally {
+			loadingOnboarding = false;
+			showQuickStart = true;
+		}
+	}
+
+	function downloadClaudeMd() {
+		const content = claudeMdContent || `# Agent: ${newName}\n\nCLAUDE.md content will be available when the backend endpoint is ready.`;
+		const blob = new Blob([content], { type: 'text/markdown' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'CLAUDE.md';
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+	}
+
+	async function copyMcpConfig() {
+		const config = mcpConfigContent ? JSON.stringify(mcpConfigContent, null, 2) : currentConfig;
+		await copyText(config, 'mcp-config');
+	}
+
 	function resetForm() {
 		showRegister = false;
 		newApiKey = '';
 		newName = '';
 		newDisplayName = '';
+		newArchetype = '';
 		registerError = '';
 		selectedClient = 'claude-code';
 		authMode = 'apikey';
+		showQuickStart = false;
+		claudeMdContent = '';
+		mcpConfigContent = null;
+		loadingOnboarding = false;
 	}
 
 	async function copyText(text: string, label: string) {
@@ -277,6 +336,56 @@
 					<p class="text-[10px] text-text-secondary mt-1.5">Add to <code class="font-mono">{getConfigFilePath(selectedClient)}</code></p>
 				</div>
 
+				<!-- Quick Start Panel -->
+				{#if showQuickStart}
+					<div class="mb-4 p-4 bg-accent-purple/5 border border-accent-purple/20 rounded-lg">
+						<h4 class="text-sm font-semibold text-text-primary font-display mb-3 flex items-center gap-2">
+							<svg class="w-4 h-4 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+							</svg>
+							Quick Start
+						</h4>
+
+						<div class="flex gap-2 mb-4">
+							<button
+								class="btn-secondary text-xs flex items-center gap-1.5"
+								onclick={downloadClaudeMd}
+								disabled={loadingOnboarding}
+							>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+								</svg>
+								Download CLAUDE.md
+							</button>
+							<button
+								class="btn-secondary text-xs flex items-center gap-1.5"
+								onclick={copyMcpConfig}
+								disabled={loadingOnboarding}
+							>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+								</svg>
+								{copiedField === 'mcp-config' ? 'Copied!' : 'Copy MCP Config'}
+							</button>
+						</div>
+
+						<ol class="space-y-2 text-xs text-text-secondary">
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">1</span>
+								<span>Save the <code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">CLAUDE.md</code> file to your project directory</span>
+							</li>
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">2</span>
+								<span>Add the MCP config to your Claude Code settings (<code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">~/.claude/settings.json</code>)</span>
+							</li>
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">3</span>
+								<span>Start experimenting: <code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">/loop 10m "Check SynapBus for work and process it"</code></span>
+							</li>
+						</ol>
+					</div>
+				{/if}
+
 				<button
 					class="btn-primary w-full"
 					onclick={resetForm}
@@ -299,6 +408,15 @@
 					<div>
 						<label for="agent-display" class="block text-xs font-medium text-text-secondary mb-1">Display name <span class="text-text-secondary">(optional)</span></label>
 						<input id="agent-display" type="text" class="input" placeholder="e.g. Research Agent" bind:value={newDisplayName} />
+					</div>
+					<div>
+						<label for="agent-archetype" class="block text-xs font-medium text-text-secondary mb-1">Archetype</label>
+						<select id="agent-archetype" class="input" bind:value={newArchetype}>
+							{#each archetypes as arch}
+								<option value={arch.value}>{arch.icon}{arch.icon ? ' ' : ''}{arch.label}</option>
+							{/each}
+						</select>
+						<p class="text-[10px] text-text-secondary mt-1">Determines the agent's CLAUDE.md template and default skills.</p>
 					</div>
 					<button type="submit" class="btn-primary w-full" disabled={registering || !newName.trim()}>
 						{registering ? 'Registering...' : 'Register Agent'}

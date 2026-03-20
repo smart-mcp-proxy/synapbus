@@ -278,4 +278,23 @@ export const trust = {
 		request<{ scores: Record<string, number> }>('GET', `/api/trust/${encodeURIComponent(agentName)}`)
 };
 
+// Onboarding
+export const onboarding = {
+	archetypes: () => request<{ archetypes: any[] }>('GET', '/api/archetypes'),
+	claudeMd: async (agentName: string, archetype?: string) => {
+		const qs = archetype ? `?archetype=${encodeURIComponent(archetype)}` : '';
+		const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/claude-md${qs}`, { credentials: 'same-origin' });
+		if (!res.ok) return '';
+		return res.text();
+	},
+	mcpConfig: (agentName: string) =>
+		request<{ config: any }>('GET', `/api/agents/${encodeURIComponent(agentName)}/mcp-config`),
+	skills: () => request<{ skills: any[] }>('GET', '/api/skills'),
+	skill: async (name: string) => {
+		const res = await fetch(`/api/skills/${encodeURIComponent(name)}`, { credentials: 'same-origin' });
+		if (!res.ok) return '';
+		return res.text();
+	}
+};
+
 export { ApiError };

@@ -641,6 +641,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Version:           version,
 		PushService:       pushService,
 		TrustService:      trustService,
+		BaseURL:           baseURL,
 	})
 	r.Mount("/", apiRouter)
 

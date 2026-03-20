@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { agents as agentsApi, trust as trustApi } from '$lib/api/client';
+	import { agents as agentsApi, trust as trustApi, onboarding } from '$lib/api/client';
 	import TraceViewer from '$lib/components/TraceViewer.svelte';
 
 	let agent = $state<any>(null);
@@ -17,6 +17,21 @@
 	let editNameValue = $state('');
 	let savingName = $state(false);
 	let nameError = $state('');
+
+	// Getting Started
+	let gettingStartedOpen = $state(false);
+	let mcpConfigData = $state<any>(null);
+	let mcpConfigLoading = $state(false);
+	let copiedField = $state('');
+
+	const archetypeLabels: Record<string, { label: string; color: string }> = {
+		researcher: { label: 'Researcher', color: 'bg-accent-blue/20 text-accent-blue' },
+		writer: { label: 'Writer', color: 'bg-accent-green/20 text-accent-green' },
+		commenter: { label: 'Commenter', color: 'bg-accent-yellow/20 text-accent-yellow' },
+		monitor: { label: 'Monitor', color: 'bg-accent-purple/20 text-accent-purple' },
+		operator: { label: 'Operator', color: 'bg-accent-red/20 text-accent-red' },
+		custom: { label: 'Custom', color: 'bg-bg-tertiary text-text-secondary' }
+	};
 
 	// Trust Scores state
 	let trustScores = $state<Record<string, number>>({});
@@ -163,6 +178,63 @@
 			savingAccess = false;
 		}
 	}
+
+	async function toggleGettingStarted() {
+		gettingStartedOpen = !gettingStartedOpen;
+		if (gettingStartedOpen && !mcpConfigData) {
+			mcpConfigLoading = true;
+			try {
+				const res = await onboarding.mcpConfig(agentName);
+				mcpConfigData = res.config;
+			} catch {
+				mcpConfigData = null;
+			} finally {
+				mcpConfigLoading = false;
+			}
+		}
+	}
+
+	async function downloadAgentClaudeMd() {
+		const archetype = agent?.capabilities?.archetype;
+		try {
+			const content = await onboarding.claudeMd(agentName, archetype);
+			const blob = new Blob([content || `# Agent: ${agentName}\n\nCLAUDE.md content will be available when the backend endpoint is ready.`], { type: 'text/markdown' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = 'CLAUDE.md';
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		} catch {
+			// Endpoint not available yet
+			const blob = new Blob([`# Agent: ${agentName}\n\nCLAUDE.md content will be available when the backend endpoint is ready.`], { type: 'text/markdown' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = 'CLAUDE.md';
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		}
+	}
+
+	async function copyText(text: string, label: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedField = label;
+			setTimeout(() => (copiedField = ''), 2000);
+		} catch {
+			// fallback
+		}
+	}
+
+	async function copyMcpConfig() {
+		const config = mcpConfigData ? JSON.stringify(mcpConfigData, null, 2) : '{}';
+		await copyText(config, 'mcp-config');
+	}
 </script>
 
 <div class="p-5 max-w-5xl">
@@ -282,6 +354,95 @@
 					{/if}
 				</div>
 			</div>
+		</div>
+
+		<!-- Getting Started -->
+		<div class="card mb-5">
+			<button
+				class="w-full px-5 py-3 border-b border-border flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors"
+				onclick={toggleGettingStarted}
+			>
+				<h2 class="font-semibold text-sm text-text-primary font-display flex items-center gap-2">
+					<svg class="w-4 h-4 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+					</svg>
+					Getting Started
+					{#if agent?.capabilities?.archetype}
+						{@const arch = archetypeLabels[agent.capabilities.archetype]}
+						{#if arch}
+							<span class="badge text-[10px] {arch.color}">{arch.label}</span>
+						{:else}
+							<span class="badge text-[10px] bg-bg-tertiary text-text-secondary">{agent.capabilities.archetype}</span>
+						{/if}
+					{/if}
+				</h2>
+				<svg class="w-4 h-4 text-text-secondary transition-transform {gettingStartedOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+
+			{#if gettingStartedOpen}
+				<div class="p-5 space-y-4">
+					<!-- Action buttons -->
+					<div class="flex gap-2 flex-wrap">
+						<button
+							class="btn-secondary text-xs flex items-center gap-1.5"
+							onclick={downloadAgentClaudeMd}
+						>
+							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+							</svg>
+							Download CLAUDE.md
+						</button>
+						<button
+							class="btn-secondary text-xs flex items-center gap-1.5"
+							onclick={copyMcpConfig}
+						>
+							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+							</svg>
+							{copiedField === 'mcp-config' ? 'Copied!' : 'Copy MCP Config'}
+						</button>
+					</div>
+
+					<!-- MCP Config preview -->
+					{#if mcpConfigLoading}
+						<div class="skeleton h-20 rounded"></div>
+					{:else if mcpConfigData}
+						<div>
+							<div class="flex items-center justify-between mb-1.5">
+								<label class="text-xs font-medium text-text-secondary">MCP Configuration</label>
+								<button
+									class="text-xs text-text-secondary hover:text-text-primary transition-colors"
+									onclick={copyMcpConfig}
+								>
+									{copiedField === 'mcp-config' ? 'Copied!' : 'Copy'}
+								</button>
+							</div>
+							<pre class="p-3 bg-bg-primary rounded text-xs font-mono text-text-primary break-all select-all border border-border overflow-x-auto">{JSON.stringify(mcpConfigData, null, 2)}</pre>
+						</div>
+					{/if}
+
+					<!-- Quick Start steps -->
+					<div>
+						<h4 class="text-xs font-medium text-text-secondary mb-2">Quick Start</h4>
+						<ol class="space-y-2 text-xs text-text-secondary">
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">1</span>
+								<span>Save the <code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">CLAUDE.md</code> file to your project directory</span>
+							</li>
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">2</span>
+								<span>Add the MCP config to your Claude Code settings (<code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">~/.claude/settings.json</code>)</span>
+							</li>
+							<li class="flex gap-2">
+								<span class="flex-shrink-0 w-5 h-5 rounded-full bg-accent-purple/20 text-accent-purple text-[10px] font-bold flex items-center justify-center">3</span>
+								<span>Start experimenting: <code class="font-mono text-text-primary bg-bg-tertiary px-1 rounded">/loop 10m "Check SynapBus for work and process it"</code></span>
+							</li>
+						</ol>
+					</div>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Webhook & K8s Management Links -->
