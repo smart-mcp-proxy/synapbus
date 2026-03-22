@@ -106,6 +106,8 @@ make lint           # Run linters
 - Go 1.25+ (backend), Svelte 5 + Tailwind (frontend) + go-chi/chi (HTTP), mark3labs/mcp-go (MCP), modernc.org/sqlite (storage), spf13/cobra (CLI) (009-attachments-threads)
 - SQLite (modernc.org/sqlite, pure Go) + content-addressable filesystem (SHA-256) (009-attachments-threads)
 - SQLite (modernc.org/sqlite, pure Go) — new migration 013_reactions.sql (010-reactions-workflows)
+- Go 1.25+ (SynapBus), Python 3.12 (Searcher agents) + go-chi/chi, mark3labs/mcp-go, ory/fosite (SynapBus); claude-agent-sdk, httpx, psycopg (Searcher) (013-linkedin-approval-workflow)
+- SQLite via modernc.org/sqlite (SynapBus); PostgreSQL (Searcher) (013-linkedin-approval-workflow)
 
 ## Recent Changes
 - 002-mcp-auth-ux-polish: Added Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI)
