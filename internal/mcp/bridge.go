@@ -1080,25 +1080,59 @@ func (b *ServiceBridge) callListByState(ctx context.Context, args map[string]any
 		messageIDs = []int64{}
 	}
 
+	totalCount := len(messageIDs)
+
+	// Apply limit and offset for pagination
+	limit := getInt(args, "limit", 20)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := getInt(args, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(messageIDs) {
+		offset = len(messageIDs)
+	}
+	end := offset + limit
+	if end > len(messageIDs) {
+		end = len(messageIDs)
+	}
+	pageIDs := messageIDs[offset:end]
+
 	resp := map[string]any{
-		"message_ids": messageIDs,
-		"count":       len(messageIDs),
+		"message_ids": pageIDs,
+		"count":       len(pageIDs),
+		"total":       totalCount,
 		"channel":     channelName,
 		"state":       state,
+		"limit":       limit,
+		"offset":      offset,
 	}
 
 	includeMessages := getBool(args, "include_messages", false)
-	if includeMessages && len(messageIDs) > 0 && b.msgService != nil {
+	if includeMessages && len(pageIDs) > 0 && b.msgService != nil {
+		maxBodyLen := getInt(args, "max_body_length", 500)
+		if maxBodyLen <= 0 {
+			maxBodyLen = 500
+		}
 		var messages []map[string]any
-		for _, id := range messageIDs {
+		for _, id := range pageIDs {
 			msg, err := b.msgService.GetMessageByID(ctx, id)
 			if err != nil {
-				continue // skip messages that can't be fetched
+				continue
+			}
+			body := msg.Body
+			if len(body) > maxBodyLen {
+				body = body[:maxBodyLen] + "..."
 			}
 			messages = append(messages, map[string]any{
 				"id":         msg.ID,
 				"from_agent": msg.FromAgent,
-				"body":       msg.Body,
+				"body":       body,
 				"priority":   msg.Priority,
 				"created_at": msg.CreatedAt,
 				"reply_to":   msg.ReplyTo,
