@@ -116,7 +116,7 @@
 								<span class="badge bg-accent-yellow/20 text-accent-yellow">P{msg.priority}</span>
 							{/if}
 						</div>
-						<div class="text-sm text-text-primary/90 leading-relaxed"><MessageBody body={msg.body} truncate={300} /></div>
+						<div class="text-sm text-text-primary/90 leading-relaxed"><MessageBody body={msg.body} truncate={800} /></div>
 
 						<!-- Attachments -->
 						{#if msg.attachments && msg.attachments.length > 0}
