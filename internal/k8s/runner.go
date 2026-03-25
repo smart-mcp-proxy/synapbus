@@ -84,6 +84,11 @@ func (r *K8sJobRunner) IsAvailable() bool {
 	return true
 }
 
+// GetClientset returns the kubernetes clientset for direct API access (used by reactor poller).
+func (r *K8sJobRunner) GetClientset() kubernetes.Interface {
+	return r.clientset
+}
+
 func (r *K8sJobRunner) GetNamespace() string {
 	return r.namespace
 }

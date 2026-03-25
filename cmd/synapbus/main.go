@@ -39,6 +39,7 @@ import (
 	"github.com/synapbus/synapbus/internal/jsruntime"
 	k8spkg "github.com/synapbus/synapbus/internal/k8s"
 	mcpserver "github.com/synapbus/synapbus/internal/mcp"
+	reactorpkg "github.com/synapbus/synapbus/internal/reactor"
 	"github.com/synapbus/synapbus/internal/messaging"
 	prommetrics "github.com/synapbus/synapbus/internal/metrics"
 	"github.com/synapbus/synapbus/internal/reactions"
@@ -467,9 +468,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		slog.Info("K8s job runner not available (not in-cluster)")
 	}
 
-	// Create event dispatcher (fans out to webhooks + K8s)
-	eventDispatcher := dispatcher.NewMultiDispatcher(slog.Default(), deliveryEngine, k8sDispatcher)
+	// Create reactor engine for reactive agent triggering
+	reactorStore := reactorpkg.NewStore(db.DB)
+	reactorEngine := reactorpkg.New(reactorStore, agentStore, k8sRunner, slog.Default())
+	reactorNotifier := reactorpkg.NewDMFailureNotifier(msgService)
+	reactorEngine.SetFailureNotifier(reactorNotifier)
+
+	// Create event dispatcher (fans out to webhooks + K8s + reactor)
+	eventDispatcher := dispatcher.NewMultiDispatcher(slog.Default(), deliveryEngine, k8sDispatcher, reactorEngine)
 	msgService.SetDispatcher(eventDispatcher)
+
+	// Start reactor poller for K8s Job status tracking
+	reactorPoller := reactorpkg.NewPoller(reactorStore, agentStore, k8sRunner, reactorEngine, slog.Default())
+	reactorPoller.Start()
+	slog.Info("reactor engine and poller started")
 
 	// Create JS runtime pool and action registry for hybrid MCP tools
 	jsPool := jsruntime.NewPool(10)
@@ -641,6 +653,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Version:           version,
 		PushService:       pushService,
 		TrustService:      trustService,
+		ReactorStore:      reactorStore,
+		ReactorEngine:     reactorEngine,
 		BaseURL:           baseURL,
 	})
 	r.Mount("/", apiRouter)

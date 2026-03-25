@@ -19,6 +19,12 @@ type AgentStore interface {
 	ListAgentsByOwner(ctx context.Context, ownerID int64) ([]*Agent, error)
 	SearchAgentsByCapability(ctx context.Context, query string) ([]*Agent, error)
 	GetHumanAgentByOwner(ctx context.Context, ownerID int64) (*Agent, error)
+
+	// Reactive trigger methods
+	UpdateTriggerConfig(ctx context.Context, name string, mode string, cooldown, budget, maxDepth int) error
+	UpdateK8sImage(ctx context.Context, name, image, envJSON, preset string) error
+	SetPendingWork(ctx context.Context, name string, pending bool) error
+	ListReactiveAgents(ctx context.Context) ([]*Agent, error)
 }
 
 // SQLiteAgentStore implements AgentStore using SQLite.
@@ -37,6 +43,28 @@ func (s *SQLiteAgentStore) CreateAgent(ctx context.Context, agent *Agent) error 
 		caps = "{}"
 	}
 
+	// Default trigger values
+	triggerMode := agent.TriggerMode
+	if triggerMode == "" {
+		triggerMode = TriggerModePassive
+	}
+	cooldown := agent.CooldownSeconds
+	if cooldown == 0 {
+		cooldown = 600
+	}
+	budget := agent.DailyTriggerBudget
+	if budget == 0 {
+		budget = 8
+	}
+	maxDepth := agent.MaxTriggerDepth
+	if maxDepth == 0 {
+		maxDepth = 5
+	}
+	preset := agent.K8sResourcePreset
+	if preset == "" {
+		preset = "default"
+	}
+
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO agents (name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -51,20 +79,75 @@ func (s *SQLiteAgentStore) CreateAgent(ctx context.Context, agent *Agent) error 
 	}
 	agent.ID = id
 	agent.Status = AgentStatusActive
+	agent.TriggerMode = triggerMode
+	agent.CooldownSeconds = cooldown
+	agent.DailyTriggerBudget = budget
+	agent.MaxTriggerDepth = maxDepth
+	agent.K8sResourcePreset = preset
 	return nil
+}
+
+// UpdateTriggerConfig updates the reactive trigger configuration for an agent.
+func (s *SQLiteAgentStore) UpdateTriggerConfig(ctx context.Context, name string, mode string, cooldown, budget, maxDepth int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET trigger_mode = ?, cooldown_seconds = ?, daily_trigger_budget = ?, max_trigger_depth = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE name = ? AND status = 'active'`,
+		mode, cooldown, budget, maxDepth, name,
+	)
+	return err
+}
+
+// UpdateK8sImage updates the K8s container image and env config for an agent.
+func (s *SQLiteAgentStore) UpdateK8sImage(ctx context.Context, name, image, envJSON, preset string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET k8s_image = ?, k8s_env_json = ?, k8s_resource_preset = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE name = ? AND status = 'active'`,
+		image, envJSON, preset, name,
+	)
+	return err
+}
+
+// SetPendingWork sets the pending_work flag for an agent.
+func (s *SQLiteAgentStore) SetPendingWork(ctx context.Context, name string, pending bool) error {
+	val := 0
+	if pending {
+		val = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET pending_work = ? WHERE name = ? AND status = 'active'`,
+		val, name,
+	)
+	return err
+}
+
+// ListReactiveAgents returns all active agents with trigger_mode='reactive'.
+func (s *SQLiteAgentStore) ListReactiveAgents(ctx context.Context) ([]*Agent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		agentSelectSQL()+` WHERE status = 'active' AND trigger_mode = 'reactive' ORDER BY name`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanAgents(rows)
+}
+
+// agentSelectSQL returns the base SELECT clause for agent queries.
+func agentSelectSQL() string {
+	return `SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at,
+		 trigger_mode, cooldown_seconds, daily_trigger_budget, max_trigger_depth, k8s_image, k8s_env_json, k8s_resource_preset, pending_work
+		 FROM agents`
 }
 
 func (s *SQLiteAgentStore) GetAgentByName(ctx context.Context, name string) (*Agent, error) {
 	return s.scanAgent(s.db.QueryRowContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE name = ? AND status = 'active'`, name,
+		agentSelectSQL()+` WHERE name = ? AND status = 'active'`, name,
 	))
 }
 
 func (s *SQLiteAgentStore) GetAgentByID(ctx context.Context, id int64) (*Agent, error) {
 	return s.scanAgent(s.db.QueryRowContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE id = ? AND status = 'active'`, id,
+		agentSelectSQL()+` WHERE id = ? AND status = 'active'`, id,
 	))
 }
 
@@ -103,8 +186,7 @@ func (s *SQLiteAgentStore) DeactivateAgent(ctx context.Context, name string) err
 
 func (s *SQLiteAgentStore) ListActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE status = 'active' ORDER BY name`,
+		agentSelectSQL()+` WHERE status = 'active' ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
@@ -115,8 +197,7 @@ func (s *SQLiteAgentStore) ListActiveAgents(ctx context.Context) ([]*Agent, erro
 
 func (s *SQLiteAgentStore) ListAllActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE status = 'active' AND type != 'human' ORDER BY name`,
+		agentSelectSQL()+` WHERE status = 'active' AND type != 'human' ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
@@ -127,8 +208,7 @@ func (s *SQLiteAgentStore) ListAllActiveAgents(ctx context.Context) ([]*Agent, e
 
 func (s *SQLiteAgentStore) ListAgentsByOwner(ctx context.Context, ownerID int64) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE owner_id = ? AND status = 'active' ORDER BY name`,
+		agentSelectSQL()+` WHERE owner_id = ? AND status = 'active' ORDER BY name`,
 		ownerID,
 	)
 	if err != nil {
@@ -141,8 +221,7 @@ func (s *SQLiteAgentStore) ListAgentsByOwner(ctx context.Context, ownerID int64)
 func (s *SQLiteAgentStore) SearchAgentsByCapability(ctx context.Context, query string) ([]*Agent, error) {
 	// Simple LIKE search on the capabilities JSON field
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE status = 'active' AND capabilities LIKE ? ORDER BY name`,
+		agentSelectSQL()+` WHERE status = 'active' AND capabilities LIKE ? ORDER BY name`,
 		"%"+query+"%",
 	)
 	if err != nil {
@@ -154,23 +233,30 @@ func (s *SQLiteAgentStore) SearchAgentsByCapability(ctx context.Context, query s
 
 func (s *SQLiteAgentStore) GetHumanAgentByOwner(ctx context.Context, ownerID int64) (*Agent, error) {
 	return s.scanAgent(s.db.QueryRowContext(ctx,
-		`SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at
-		 FROM agents WHERE owner_id = ? AND type = 'human' AND status = 'active' LIMIT 1`, ownerID,
+		agentSelectSQL()+` WHERE owner_id = ? AND type = 'human' AND status = 'active' LIMIT 1`, ownerID,
 	))
 }
 
 func (s *SQLiteAgentStore) scanAgent(row *sql.Row) (*Agent, error) {
 	var agent Agent
 	var caps string
+	var k8sImage, k8sEnvJSON sql.NullString
+	var pendingWork int
 	err := row.Scan(
 		&agent.ID, &agent.Name, &agent.DisplayName, &agent.Type,
 		&caps, &agent.OwnerID, &agent.APIKeyHash, &agent.Status,
 		&agent.CreatedAt, &agent.UpdatedAt,
+		&agent.TriggerMode, &agent.CooldownSeconds, &agent.DailyTriggerBudget,
+		&agent.MaxTriggerDepth, &k8sImage, &k8sEnvJSON,
+		&agent.K8sResourcePreset, &pendingWork,
 	)
 	if err != nil {
 		return nil, err
 	}
 	agent.Capabilities = json.RawMessage(caps)
+	agent.K8sImage = k8sImage.String
+	agent.K8sEnvJSON = k8sEnvJSON.String
+	agent.PendingWork = pendingWork != 0
 	return &agent, nil
 }
 
@@ -179,15 +265,23 @@ func (s *SQLiteAgentStore) scanAgents(rows *sql.Rows) ([]*Agent, error) {
 	for rows.Next() {
 		var agent Agent
 		var caps string
+		var k8sImage, k8sEnvJSON sql.NullString
+		var pendingWork int
 		err := rows.Scan(
 			&agent.ID, &agent.Name, &agent.DisplayName, &agent.Type,
 			&caps, &agent.OwnerID, &agent.APIKeyHash, &agent.Status,
 			&agent.CreatedAt, &agent.UpdatedAt,
+			&agent.TriggerMode, &agent.CooldownSeconds, &agent.DailyTriggerBudget,
+			&agent.MaxTriggerDepth, &k8sImage, &k8sEnvJSON,
+			&agent.K8sResourcePreset, &pendingWork,
 		)
 		if err != nil {
 			return nil, err
 		}
 		agent.Capabilities = json.RawMessage(caps)
+		agent.K8sImage = k8sImage.String
+		agent.K8sEnvJSON = k8sEnvJSON.String
+		agent.PendingWork = pendingWork != 0
 		agents = append(agents, &agent)
 	}
 	if agents == nil {
