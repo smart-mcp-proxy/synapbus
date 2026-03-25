@@ -299,4 +299,20 @@ export const onboarding = {
 	}
 };
 
+// Reactive Runs
+export const runs = {
+	list: (params?: { agent?: string; status?: string; limit?: number; offset?: number }) => {
+		const qs = new URLSearchParams();
+		if (params?.agent) qs.set('agent', params.agent);
+		if (params?.status) qs.set('status', params.status);
+		if (params?.limit) qs.set('limit', String(params.limit));
+		if (params?.offset) qs.set('offset', String(params.offset));
+		const q = qs.toString();
+		return request<{ runs: any[]; total: number }>('GET', `/api/runs${q ? '?' + q : ''}`);
+	},
+	get: (id: number) => request<any>('GET', `/api/runs/${id}`),
+	retry: (id: number) => request<any>('POST', `/api/runs/${id}/retry`),
+	reactiveAgents: () => request<{ agents: any[] }>('GET', '/api/agents/reactive')
+};
+
 export { ApiError };
