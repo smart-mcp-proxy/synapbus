@@ -101,3 +101,11 @@ type DMUnreadCount struct {
 	UnreadCount   int    `json:"unread_count"`
 	LastMessageID int64  `json:"last_message_id"`
 }
+
+// DMPartner represents a DM conversation partner with summary info.
+type DMPartner struct {
+	Name        string `json:"name"`
+	LastMessage string `json:"last_message"`
+	LastTime    string `json:"last_time"`
+	Unread      int    `json:"unread"`
+}

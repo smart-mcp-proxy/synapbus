@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -583,8 +582,8 @@ func (h *MessagesHandler) DMMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // DMPartners returns a list of agents the user has DM conversations with,
-// ordered by most recent message. Each entry includes the peer agent name,
-// last message preview, timestamp, and unread count.
+// ordered by most recent message. Queries ALL messages (not just inbox)
+// so historical conversations always appear.
 func (h *MessagesHandler) DMPartners(w http.ResponseWriter, r *http.Request) {
 	ownerID, ok := OwnerIDFromContext(r.Context())
 	if !ok {
@@ -603,86 +602,41 @@ func (h *MessagesHandler) DMPartners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ownedNames := make(map[string]bool, len(ownedAgents))
-	for _, a := range ownedAgents {
-		ownedNames[a.Name] = true
+	agentNames := make([]string, len(ownedAgents))
+	for i, a := range ownedAgents {
+		agentNames[i] = a.Name
 	}
 
-	// Get recent DMs for all owned agents
-	type partner struct {
+	partners, err := h.msgService.GetDMPartners(r.Context(), agentNames)
+	if err != nil {
+		h.logger.Error("get dm partners failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorBody("server_error", "Failed to get DM partners"))
+		return
+	}
+
+	// Resolve display names
+	type partnerWithDisplay struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"display_name"`
 		LastMessage string `json:"last_message"`
 		LastTime    string `json:"last_time"`
 		Unread      int    `json:"unread"`
 	}
-	partnerMap := make(map[string]*partner)
-
-	for _, agent := range ownedAgents {
-		opts := messaging.ReadOptions{
-			Limit:       200,
-			IncludeRead: true,
+	result := make([]partnerWithDisplay, len(partners))
+	for i, p := range partners {
+		result[i] = partnerWithDisplay{
+			Name:        p.Name,
+			DisplayName: p.Name,
+			LastMessage: p.LastMessage,
+			LastTime:    p.LastTime,
+			Unread:      p.Unread,
 		}
-		result, err := h.msgService.ReadInbox(r.Context(), agent.Name, opts)
-		if err != nil {
-			continue
-		}
-		for _, msg := range result.Messages {
-			if msg.ChannelID != nil {
-				continue // skip channel messages
-			}
-			// Determine the peer (the other party in the DM)
-			peer := msg.FromAgent
-			if ownedNames[peer] {
-				peer = msg.ToAgent
-			}
-			if peer == "" || ownedNames[peer] {
-				continue // skip self-to-self
-			}
-
-			existing, exists := partnerMap[peer]
-			if !exists {
-				partnerMap[peer] = &partner{
-					Name:        peer,
-					DisplayName: peer,
-					LastMessage: truncateStr(msg.Body, 80),
-					LastTime:    msg.CreatedAt.Format(time.RFC3339),
-					Unread:      0,
-				}
-				existing = partnerMap[peer]
-			}
-
-			// Track newest message
-			lt, _ := time.Parse(time.RFC3339, existing.LastTime)
-			if msg.CreatedAt.After(lt) {
-				existing.LastMessage = truncateStr(msg.Body, 80)
-				existing.LastTime = msg.CreatedAt.Format(time.RFC3339)
-			}
-
-			// Count unread (pending messages TO owned agents)
-			if ownedNames[msg.ToAgent] && (msg.Status == "pending" || msg.Status == "processing") {
-				existing.Unread++
-			}
+		if a, err := h.agentService.GetAgent(r.Context(), p.Name); err == nil {
+			result[i].DisplayName = a.DisplayName
 		}
 	}
 
-	// Resolve display names
-	for peer, p := range partnerMap {
-		if a, err := h.agentService.GetAgent(r.Context(), peer); err == nil {
-			p.DisplayName = a.DisplayName
-		}
-	}
-
-	// Sort by last_time descending
-	partners := make([]*partner, 0, len(partnerMap))
-	for _, p := range partnerMap {
-		partners = append(partners, p)
-	}
-	sort.Slice(partners, func(i, j int) bool {
-		return partners[i].LastTime > partners[j].LastTime
-	})
-
-	writeJSON(w, http.StatusOK, map[string]any{"partners": partners})
+	writeJSON(w, http.StatusOK, map[string]any{"partners": result})
 }
 
 func (h *MessagesHandler) isAgentOwnedBy(r *http.Request, agentName string, ownerID int64) bool {

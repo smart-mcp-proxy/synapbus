@@ -29,6 +29,7 @@ type MessageStore interface {
 	GetChannelMessages(ctx context.Context, channelID int64, limit, offset int) ([]*Message, error)
 	CountChannelMessages(ctx context.Context, channelID int64) (int, error)
 	GetDMMessages(ctx context.Context, agents []string, peerAgent string, limit int) ([]*Message, error)
+	GetDMPartners(ctx context.Context, agents []string) ([]DMPartner, error)
 	AgentExists(ctx context.Context, agentName string) (bool, error)
 	CountPendingDMs(ctx context.Context, agentName string) (int64, error)
 	GetPendingDMs(ctx context.Context, agentName string, limit int) ([]*Message, error)
@@ -685,6 +686,94 @@ func (s *SQLiteMessageStore) GetDMMessages(ctx context.Context, agents []string,
 	}
 	defer rows.Close()
 	return scanMessages(rows)
+}
+
+// GetDMPartners returns all unique DM conversation partners for the owned agents,
+// with the most recent message preview and unread count. This queries ALL messages
+// (not just inbox) to show historical conversations.
+func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, agents []string) ([]DMPartner, error) {
+	if len(agents) == 0 {
+		return []DMPartner{}, nil
+	}
+
+	placeholders := make([]string, len(agents))
+	args := make([]any, 0, len(agents)*2)
+	for i, a := range agents {
+		placeholders[i] = "?"
+		args = append(args, a)
+	}
+	inClause := strings.Join(placeholders, ",")
+	// Duplicate args for the second IN clause
+	for _, a := range agents {
+		args = append(args, a)
+	}
+
+	// Find all DM partners with latest message and unread count
+	query := fmt.Sprintf(`
+		SELECT
+			peer,
+			last_body,
+			last_time,
+			COALESCE(SUM(is_unread), 0) as unread
+		FROM (
+			SELECT
+				CASE
+					WHEN from_agent IN (%s) THEN to_agent
+					ELSE from_agent
+				END as peer,
+				body as last_body,
+				created_at as last_time,
+				CASE
+					WHEN to_agent IN (%s) AND status IN ('pending', 'processing') THEN 1
+					ELSE 0
+				END as is_unread,
+				ROW_NUMBER() OVER (
+					PARTITION BY CASE WHEN from_agent IN (%s) THEN to_agent ELSE from_agent END
+					ORDER BY created_at DESC
+				) as rn
+			FROM messages
+			WHERE channel_id IS NULL
+			  AND (from_agent IN (%s) OR to_agent IN (%s))
+		) sub
+		WHERE rn = 1 AND peer != '' AND peer NOT IN (%s)
+		GROUP BY peer
+		ORDER BY last_time DESC
+		LIMIT 50`,
+		inClause, inClause, inClause, inClause, inClause, inClause,
+	)
+
+	// Need 6 copies of the args for the 6 IN clauses
+	fullArgs := make([]any, 0, len(agents)*6)
+	for i := 0; i < 6; i++ {
+		for _, a := range agents {
+			fullArgs = append(fullArgs, a)
+		}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, fullArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("get dm partners: %w", err)
+	}
+	defer rows.Close()
+
+	var partners []DMPartner
+	for rows.Next() {
+		var p DMPartner
+		var body sql.NullString
+		if err := rows.Scan(&p.Name, &body, &p.LastTime, &p.Unread); err != nil {
+			return nil, err
+		}
+		if body.Valid && len(body.String) > 80 {
+			p.LastMessage = body.String[:80] + "..."
+		} else if body.Valid {
+			p.LastMessage = body.String
+		}
+		partners = append(partners, p)
+	}
+	if partners == nil {
+		partners = []DMPartner{}
+	}
+	return partners, rows.Err()
 }
 
 func (s *SQLiteMessageStore) CountPendingDMs(ctx context.Context, agentName string) (int64, error) {

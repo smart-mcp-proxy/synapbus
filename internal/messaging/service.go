@@ -531,6 +531,11 @@ func (s *MessagingService) GetDMMessages(ctx context.Context, ownedAgents []stri
 	return messages, nil
 }
 
+// GetDMPartners returns all DM conversation partners for the owned agents.
+func (s *MessagingService) GetDMPartners(ctx context.Context, ownedAgents []string) ([]DMPartner, error) {
+	return s.store.GetDMPartners(ctx, ownedAgents)
+}
+
 // GetDMUnreadCounts returns unread DM counts grouped by peer agent.
 func (s *MessagingService) GetDMUnreadCounts(ctx context.Context, agentName string) ([]DMUnreadCount, error) {
 	return s.store.GetDMUnreadCounts(ctx, agentName)
