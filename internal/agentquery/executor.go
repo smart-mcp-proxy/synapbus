@@ -206,15 +206,13 @@ channel_messages AS (
 	trimmed = strings.TrimRight(trimmed, "; \t\n")
 
 	if strings.HasPrefix(upper, "WITH") {
-		// User has their own CTEs. We need to merge them.
-		// Strategy: our CTEs come first, then append user's CTEs after a comma.
-		// Remove the user's "WITH " prefix since our CTE block already has WITH.
+		// User has their own CTEs. Merge: our CTEs first, then theirs.
 		userCTEs := strings.TrimSpace(trimmed[4:]) // skip "WITH"
-		return cte + ", " + userCTEs + " LIMIT " + fmt.Sprintf("%d", MaxRows+1)
+		return cte + ", " + userCTEs
 	}
 
 	// Simple SELECT — prepend our CTEs
-	return cte + trimmed + " LIMIT " + fmt.Sprintf("%d", MaxRows+1)
+	return cte + trimmed
 }
 
 // quoteSQLString safely quotes a string for use in SQL.
