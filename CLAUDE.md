@@ -108,6 +108,8 @@ make lint           # Run linters
 - SQLite (modernc.org/sqlite, pure Go) — new migration 013_reactions.sql (010-reactions-workflows)
 - Go 1.25+ (SynapBus), Python 3.12 (Searcher agents) + go-chi/chi, mark3labs/mcp-go, ory/fosite (SynapBus); claude-agent-sdk, httpx, psycopg (Searcher) (013-linkedin-approval-workflow)
 - SQLite via modernc.org/sqlite (SynapBus); PostgreSQL (Searcher) (013-linkedin-approval-workflow)
+- Go 1.25+ (per go.mod) + go-chi/chi (HTTP), mark3labs/mcp-go (MCP), spf13/cobra (CLI), modernc.org/sqlite (storage), k8s.io/client-go (K8s Jobs) (014-reactive-agent-triggers)
+- SQLite via modernc.org/sqlite — new migration 015_reactive_triggers.sql (014-reactive-agent-triggers)
 
 ## Recent Changes
 - 002-mcp-auth-ux-polish: Added Go 1.23+ + ory/fosite (OAuth 2.1), mark3labs/mcp-go (MCP server), go-chi/chi (HTTP), Svelte 5 + Tailwind (Web UI)

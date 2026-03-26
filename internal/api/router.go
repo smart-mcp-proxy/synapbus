@@ -12,6 +12,7 @@ import (
 	"github.com/synapbus/synapbus/internal/channels"
 	"github.com/synapbus/synapbus/internal/k8s"
 	"github.com/synapbus/synapbus/internal/messaging"
+	"github.com/synapbus/synapbus/internal/reactor"
 	"github.com/synapbus/synapbus/internal/push"
 	"github.com/synapbus/synapbus/internal/reactions"
 	"github.com/synapbus/synapbus/internal/trace"
@@ -37,6 +38,8 @@ type RouterConfig struct {
 	ReactionService   *reactions.Service
 	PushService       *push.Service
 	TrustService      *trust.Service
+	ReactorStore      *reactor.Store
+	ReactorEngine     *reactor.Reactor
 	SSEHub            *SSEHub
 	Broadcaster       *SSEBroadcaster
 	SessionMiddleware func(http.Handler) http.Handler
@@ -236,6 +239,19 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 				r.Delete("/api/push/subscribe", pushHandler.Unsubscribe)
 			})
 		}
+	}
+
+	// Reactive Runs
+	if cfg.ReactorStore != nil && cfg.ReactorEngine != nil && cfg.AgentService != nil {
+		runsHandler := NewRunsHandler(cfg.ReactorStore, cfg.ReactorEngine, agents.NewSQLiteAgentStore(cfg.DB))
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware)
+
+			r.Get("/api/runs", runsHandler.ListRuns)
+			r.Get("/api/runs/{id}", runsHandler.GetRun)
+			r.Post("/api/runs/{id}/retry", runsHandler.RetryRun)
+			r.Get("/api/agents/reactive", runsHandler.ReactiveAgents)
+		})
 	}
 
 	// Trust Scores
