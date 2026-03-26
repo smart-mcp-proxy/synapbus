@@ -688,45 +688,39 @@ func (s *SQLiteMessageStore) GetDMMessages(ctx context.Context, agents []string,
 	return scanMessages(rows)
 }
 
-// GetDMPartners returns all unique DM conversation partners for the owned agents,
-// with the most recent message preview and unread count. This queries ALL messages
-// (not just inbox) to show historical conversations.
-func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, agents []string) ([]DMPartner, error) {
-	if len(agents) == 0 {
+// GetDMPartners returns all unique DM conversation partners for the given human agent,
+// with the most recent message preview and unread count. Queries ALL messages (not just
+// inbox) so historical conversations always appear. The humanAgent is the primary viewer;
+// allAgents includes all owned agents to capture DMs sent to/from any of them.
+func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, allAgents []string) ([]DMPartner, error) {
+	if len(allAgents) == 0 {
 		return []DMPartner{}, nil
 	}
 
-	placeholders := make([]string, len(agents))
-	args := make([]any, 0, len(agents)*2)
-	for i, a := range agents {
+	placeholders := make([]string, len(allAgents))
+	for i := range allAgents {
 		placeholders[i] = "?"
-		args = append(args, a)
 	}
 	inClause := strings.Join(placeholders, ",")
-	// Duplicate args for the second IN clause
-	for _, a := range agents {
-		args = append(args, a)
-	}
 
-	// Find all DM partners with latest message and unread count
+	// For each DM, the "peer" is the other party. When from_agent is owned,
+	// peer = to_agent. When to_agent is owned, peer = from_agent.
+	// We want to see ALL conversation partners, including other owned agents
+	// (e.g., research-mcpproxy sending DMs to algis — both owned by same user).
 	query := fmt.Sprintf(`
 		SELECT
 			peer,
-			last_body,
-			last_time,
-			COALESCE(SUM(is_unread), 0) as unread
+			body as last_body,
+			created_at as last_time,
+			0 as unread
 		FROM (
 			SELECT
 				CASE
 					WHEN from_agent IN (%s) THEN to_agent
 					ELSE from_agent
 				END as peer,
-				body as last_body,
-				created_at as last_time,
-				CASE
-					WHEN to_agent IN (%s) AND status IN ('pending', 'processing') THEN 1
-					ELSE 0
-				END as is_unread,
+				body,
+				created_at,
 				ROW_NUMBER() OVER (
 					PARTITION BY CASE WHEN from_agent IN (%s) THEN to_agent ELSE from_agent END
 					ORDER BY created_at DESC
@@ -735,17 +729,15 @@ func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, agents []string)
 			WHERE channel_id IS NULL
 			  AND (from_agent IN (%s) OR to_agent IN (%s))
 		) sub
-		WHERE rn = 1 AND peer != '' AND peer NOT IN (%s)
-		GROUP BY peer
+		WHERE rn = 1 AND peer IS NOT NULL AND peer != ''
 		ORDER BY last_time DESC
 		LIMIT 50`,
-		inClause, inClause, inClause, inClause, inClause, inClause,
+		inClause, inClause, inClause, inClause,
 	)
 
-	// Need 6 copies of the args for the 6 IN clauses
-	fullArgs := make([]any, 0, len(agents)*6)
-	for i := 0; i < 6; i++ {
-		for _, a := range agents {
+	fullArgs := make([]any, 0, len(allAgents)*4)
+	for i := 0; i < 4; i++ {
+		for _, a := range allAgents {
 			fullArgs = append(fullArgs, a)
 		}
 	}
@@ -755,6 +747,12 @@ func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, agents []string)
 		return nil, fmt.Errorf("get dm partners: %w", err)
 	}
 	defer rows.Close()
+
+	// Track owned agent names for unread counting
+	ownedSet := make(map[string]bool, len(allAgents))
+	for _, a := range allAgents {
+		ownedSet[a] = true
+	}
 
 	var partners []DMPartner
 	for rows.Next() {
@@ -773,6 +771,22 @@ func (s *SQLiteMessageStore) GetDMPartners(ctx context.Context, agents []string)
 	if partners == nil {
 		partners = []DMPartner{}
 	}
+
+	// Count unread messages per partner (pending DMs TO any owned agent FROM each partner)
+	for i, p := range partners {
+		if ownedSet[p.Name] {
+			continue // Skip unread count for inter-agent DMs
+		}
+		var count int
+		err := s.db.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM messages WHERE channel_id IS NULL AND from_agent = ? AND to_agent IN (%s) AND status IN ('pending', 'processing')`, inClause),
+			append([]any{p.Name}, fullArgs[:len(allAgents)]...)...,
+		).Scan(&count)
+		if err == nil {
+			partners[i].Unread = count
+		}
+	}
+
 	return partners, rows.Err()
 }
 
