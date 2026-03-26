@@ -172,6 +172,24 @@ func (r *Reactor) createJob(ctx context.Context, agent *agents.Agent, event disp
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
+	// Add trigger depth env var to handler
+	handler.Env["SYNAPBUS_TRIGGER_DEPTH"] = fmt.Sprintf("%d", depth)
+
+	// Create K8s Job FIRST (before DB insert to avoid stuck runs on SQLITE_BUSY)
+	jobName, err := r.runner.CreateJob(ctx, handler, msg)
+	if err != nil {
+		errMsg := fmt.Sprintf("K8s Job creation failed: %s", err.Error())
+		r.recordSkippedRun(ctx, agent.Name, event, StatusFailed, errMsg)
+		r.notifyFailure(ctx, agent, event, 0, errMsg)
+		return fmt.Errorf("create K8s job: %w", err)
+	}
+
+	ns := handler.Namespace
+	if ns == "" {
+		ns = r.runner.GetNamespace()
+	}
+
+	// Insert run record with job name already set (single atomic write)
 	now := time.Now().UTC()
 	run := &ReactiveRun{
 		AgentName:        agent.Name,
@@ -180,34 +198,17 @@ func (r *Reactor) createJob(ctx context.Context, agent *agents.Agent, event disp
 		TriggerDepth:     depth,
 		TriggerFrom:      event.FromAgent,
 		Status:           StatusRunning,
+		K8sJobName:       jobName,
+		K8sNamespace:     ns,
 		StartedAt:        &now,
 	}
 
-	// Insert run record first
 	runID, err := r.store.InsertRun(ctx, run)
 	if err != nil {
-		return fmt.Errorf("insert reactive run: %w", err)
+		r.logger.Error("failed to record reactive run (job already created)",
+			"agent", agent.Name, "job", jobName, "error", err)
+		runID = 0
 	}
-
-	// Add trigger depth env var to handler
-	handler.Env["SYNAPBUS_TRIGGER_DEPTH"] = fmt.Sprintf("%d", depth)
-
-	// Create K8s Job
-	jobName, err := r.runner.CreateJob(ctx, handler, msg)
-	if err != nil {
-		// Record failure
-		errMsg := fmt.Sprintf("K8s Job creation failed: %s", err.Error())
-		_ = r.store.CompleteRun(ctx, runID, StatusFailed, errMsg, time.Now().UTC())
-		r.notifyFailure(ctx, agent, event, 0, errMsg)
-		return fmt.Errorf("create K8s job: %w", err)
-	}
-
-	// Update run with job name
-	ns := handler.Namespace
-	if ns == "" {
-		ns = r.runner.GetNamespace()
-	}
-	_ = r.store.UpdateRunStatus(ctx, runID, StatusRunning, jobName, ns, &now)
 
 	// Clear pending_work since we're launching
 	_ = r.agentStore.SetPendingWork(ctx, agent.Name, false)
