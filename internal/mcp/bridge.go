@@ -285,11 +285,12 @@ func (b *ServiceBridge) callSearchMessages(ctx context.Context, args map[string]
 		searchMode := getString(args, "search_mode", "auto")
 
 		opts := search.SearchOptions{
-			Query:       query,
-			Mode:        searchMode,
-			Limit:       getInt(args, "limit", 10),
-			FromAgent:   getString(args, "from_agent", ""),
-			MinPriority: getInt(args, "min_priority", 0),
+			Query:         query,
+			Mode:          searchMode,
+			Limit:         getInt(args, "limit", 10),
+			FromAgent:     getString(args, "from_agent", ""),
+			MinPriority:   getInt(args, "min_priority", 0),
+			MinSimilarity: getFloat(args, "min_similarity", 0),
 		}
 
 		resp, err := b.searchService.Search(ctx, b.agentName, opts)
@@ -1297,6 +1298,29 @@ func getInt(args map[string]any, key string, defaultVal int) int {
 			return defaultVal
 		}
 		return int(i)
+	}
+	return defaultVal
+}
+
+// getFloat extracts a float64 value from args with a default.
+func getFloat(args map[string]any, key string, defaultVal float64) float64 {
+	v, ok := args[key]
+	if !ok {
+		return defaultVal
+	}
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return defaultVal
+		}
+		return f
 	}
 	return defaultVal
 }

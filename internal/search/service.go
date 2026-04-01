@@ -22,15 +22,22 @@ const (
 
 // SearchOptions for the unified search service.
 type SearchOptions struct {
-	Query      string
-	Mode       string // "auto", "semantic", "fulltext"
-	Limit      int
-	ChannelID  *int64
-	FromAgent  string
-	MinPriority int
-	After      *time.Time
-	Before     *time.Time
+	Query         string
+	Mode          string // "auto", "semantic", "fulltext"
+	Limit         int
+	ChannelID     *int64
+	FromAgent     string
+	MinPriority   int
+	After         *time.Time
+	Before        *time.Time
+	MinSimilarity float64 // minimum semantic similarity threshold (default 0.25)
 }
+
+// DefaultMinSimilarity is the noise floor for semantic results.
+const DefaultMinSimilarity = 0.25
+
+// rrfK is the Reciprocal Rank Fusion constant.
+const rrfK = 60
 
 // SearchResult represents a single search result.
 type SearchResult struct {
@@ -91,8 +98,8 @@ func (s *Service) Search(ctx context.Context, agentName string, opts SearchOptio
 	// Determine effective search mode
 	switch mode {
 	case ModeAuto:
-		if s.provider != nil && s.index != nil && s.index.Len() > 0 {
-			return s.semanticSearch(ctx, agentName, opts, limit)
+		if s.provider != nil && s.index != nil && s.index.Len() > 0 && opts.Query != "" {
+			return s.hybridSearch(ctx, agentName, opts, limit)
 		}
 		return s.fulltextSearch(ctx, agentName, opts, limit)
 
@@ -177,6 +184,15 @@ func (s *Service) semanticSearch(ctx context.Context, agentName string, opts Sea
 			similarity = 0
 		}
 
+		// Apply minimum similarity threshold
+		minSim := opts.MinSimilarity
+		if minSim <= 0 {
+			minSim = DefaultMinSimilarity
+		}
+		if similarity < minSim {
+			continue
+		}
+
 		searchResults = append(searchResults, &SearchResult{
 			Message:         msg,
 			SimilarityScore: similarity,
@@ -227,6 +243,108 @@ func (s *Service) fulltextSearch(ctx context.Context, agentName string, opts Sea
 		SearchMode:   ModeFulltext,
 		TotalResults: len(results),
 	}, nil
+}
+
+// hybridSearch runs both semantic and fulltext searches, then merges results using
+// Reciprocal Rank Fusion (RRF). This gives the best of both worlds: semantic
+// understanding for conceptual queries and exact-match precision for keyword queries.
+func (s *Service) hybridSearch(ctx context.Context, agentName string, opts SearchOptions, limit int) (*SearchResponse, error) {
+	// Run both searches, collecting errors but not failing if one source works.
+	semResp, semErr := s.semanticSearch(ctx, agentName, opts, limit)
+	ftResp, ftErr := s.fulltextSearch(ctx, agentName, opts, limit)
+
+	if semErr != nil && ftErr != nil {
+		return nil, fmt.Errorf("hybrid search: semantic: %w; fulltext: %w", semErr, ftErr)
+	}
+
+	var semResults, ftResults []*SearchResult
+	if semErr == nil && semResp != nil {
+		semResults = semResp.Results
+	}
+	if ftErr == nil && ftResp != nil {
+		ftResults = ftResp.Results
+	}
+
+	// If only one source returned results, use that directly
+	if len(semResults) == 0 {
+		if ftResp != nil {
+			ftResp.SearchMode = ModeFulltext
+			return ftResp, nil
+		}
+		return &SearchResponse{SearchMode: ModeAuto}, nil
+	}
+	if len(ftResults) == 0 {
+		if semResp != nil {
+			semResp.SearchMode = ModeAuto
+			return semResp, nil
+		}
+		return &SearchResponse{SearchMode: ModeAuto}, nil
+	}
+
+	merged := mergeRRF(semResults, ftResults, limit)
+
+	return &SearchResponse{
+		Results:      merged,
+		SearchMode:   ModeAuto,
+		TotalResults: len(merged),
+	}, nil
+}
+
+// mergeRRF merges two ranked result lists using Reciprocal Rank Fusion.
+// RRF score for a document d across rankings R1..Rn: sum(1 / (k + rank_i(d))).
+// This is rank-based and robust to score-scale differences between semantic and fulltext.
+func mergeRRF(semantic, fulltext []*SearchResult, limit int) []*SearchResult {
+	type scored struct {
+		result *SearchResult
+		score  float64
+	}
+
+	// Map message ID -> accumulated RRF score + best result
+	byID := make(map[int64]*scored)
+
+	for rank, r := range semantic {
+		id := r.Message.ID
+		rrfScore := 1.0 / (float64(rrfK) + float64(rank+1))
+		if existing, ok := byID[id]; ok {
+			existing.score += rrfScore
+		} else {
+			byID[id] = &scored{result: r, score: rrfScore}
+		}
+	}
+
+	for rank, r := range fulltext {
+		id := r.Message.ID
+		rrfScore := 1.0 / (float64(rrfK) + float64(rank+1))
+		if existing, ok := byID[id]; ok {
+			existing.score += rrfScore
+			// If both matched, mark as hybrid
+			existing.result.MatchType = "hybrid"
+		} else {
+			byID[id] = &scored{result: r, score: rrfScore}
+		}
+	}
+
+	// Sort by RRF score descending
+	sorted := make([]*scored, 0, len(byID))
+	for _, s := range byID {
+		sorted = append(sorted, s)
+	}
+	// Simple insertion sort — result set is small (<200)
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && sorted[j].score > sorted[j-1].score; j-- {
+			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
+		}
+	}
+
+	if len(sorted) > limit {
+		sorted = sorted[:limit]
+	}
+
+	results := make([]*SearchResult, len(sorted))
+	for i, s := range sorted {
+		results[i] = s.result
+	}
+	return results
 }
 
 // getMessageByID fetches a message by ID from the database.

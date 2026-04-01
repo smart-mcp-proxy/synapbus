@@ -293,7 +293,7 @@ func TestService_SemanticSearch(t *testing.T) {
 		}
 	})
 
-	t.Run("auto mode uses semantic when available", func(t *testing.T) {
+	t.Run("auto mode uses hybrid when semantic available", func(t *testing.T) {
 		resp, err := svc.Search(ctx, "searcher", SearchOptions{
 			Query: "staging deployment",
 			Mode:  ModeAuto,
@@ -302,8 +302,8 @@ func TestService_SemanticSearch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search: %v", err)
 		}
-		if resp.SearchMode != ModeSemantic {
-			t.Errorf("auto search_mode = %q, want %q", resp.SearchMode, ModeSemantic)
+		if resp.SearchMode != ModeAuto {
+			t.Errorf("auto search_mode = %q, want %q", resp.SearchMode, ModeAuto)
 		}
 	})
 
@@ -362,6 +362,225 @@ func TestService_Filters(t *testing.T) {
 			if r.Message.Priority < 5 {
 				t.Errorf("got message with priority %d, want >= 5", r.Message.Priority)
 			}
+		}
+	})
+}
+
+func TestService_HybridSearch(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tracer := trace.NewTracer(db)
+	t.Cleanup(func() { tracer.Close() })
+
+	seedTestAgents(t, db, "sender", "searcher")
+
+	msgStore := messaging.NewSQLiteMessageStore(db)
+	msgService := messaging.NewMessagingService(msgStore, tracer)
+
+	mockProvider := embedding.NewMockProvider(3)
+	idx := NewMemoryVectorIndex()
+
+	// Send messages — some match fulltext, some match semantically, some both
+	msg1, _ := msgService.SendMessage(ctx, "sender", "searcher", "deployment failure in staging environment", messaging.SendOptions{})
+	msg2, _ := msgService.SendMessage(ctx, "sender", "searcher", "cat pictures are cute and funny", messaging.SendOptions{})
+	msg3, _ := msgService.SendMessage(ctx, "sender", "searcher", "staging server crashed unexpectedly", messaging.SendOptions{})
+
+	// msg1 & msg3 are semantically similar (deployment topic), msg2 is different
+	idx.AddVector(msg1.ID, []float32{0.95, 0.1, 0.0})
+	idx.AddVector(msg2.ID, []float32{0.0, 0.0, 1.0})
+	idx.AddVector(msg3.ID, []float32{0.90, 0.15, 0.0})
+
+	mockProvider.SetEmbedFunc(func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{0.95, 0.1, 0.0}, nil
+	})
+
+	svc := NewService(db, mockProvider, idx, msgService)
+
+	t.Run("auto mode uses hybrid when semantic available", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query: "staging",
+			Mode:  ModeAuto,
+			Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if resp.SearchMode != ModeAuto {
+			t.Errorf("search_mode = %q, want %q", resp.SearchMode, ModeAuto)
+		}
+		// Should have results from both semantic and fulltext
+		if len(resp.Results) == 0 {
+			t.Fatal("expected results from hybrid search")
+		}
+	})
+
+	t.Run("hybrid merges unique results from both sources", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query: "staging",
+			Mode:  ModeAuto,
+			Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+
+		// Messages that appear in both semantic and fulltext should be marked "hybrid"
+		hasHybrid := false
+		for _, r := range resp.Results {
+			if r.MatchType == "hybrid" {
+				hasHybrid = true
+				break
+			}
+		}
+		// msg1 and msg3 contain "staging" (fulltext hit) AND are deployment-related (semantic hit)
+		if !hasHybrid {
+			t.Error("expected at least one hybrid match type from overlapping results")
+		}
+	})
+
+	t.Run("auto falls back to fulltext for empty query", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query: "",
+			Mode:  ModeAuto,
+			Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if resp.SearchMode != ModeFulltext {
+			t.Errorf("search_mode = %q, want %q for empty query", resp.SearchMode, ModeFulltext)
+		}
+	})
+}
+
+func TestService_MinSimilarityThreshold(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tracer := trace.NewTracer(db)
+	t.Cleanup(func() { tracer.Close() })
+
+	seedTestAgents(t, db, "sender", "searcher")
+
+	msgStore := messaging.NewSQLiteMessageStore(db)
+	msgService := messaging.NewMessagingService(msgStore, tracer)
+
+	mockProvider := embedding.NewMockProvider(3)
+	idx := NewMemoryVectorIndex()
+
+	// Create messages with varying similarity to query
+	msgHigh, _ := msgService.SendMessage(ctx, "sender", "searcher", "high relevance deployment", messaging.SendOptions{})
+	msgLow, _ := msgService.SendMessage(ctx, "sender", "searcher", "completely unrelated topic", messaging.SendOptions{})
+
+	// msgHigh is very similar (close vector), msgLow is orthogonal (low similarity)
+	idx.AddVector(msgHigh.ID, []float32{0.95, 0.1, 0.0})
+	idx.AddVector(msgLow.ID, []float32{0.1, 0.1, 0.95}) // very different direction
+
+	mockProvider.SetEmbedFunc(func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{0.95, 0.1, 0.0}, nil
+	})
+
+	svc := NewService(db, mockProvider, idx, msgService)
+
+	t.Run("default threshold filters low-similarity noise", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query: "deployment topic",
+			Mode:  ModeSemantic,
+			Limit: 10,
+			// MinSimilarity defaults to 0.25
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		for _, r := range resp.Results {
+			if r.SimilarityScore < DefaultMinSimilarity {
+				t.Errorf("result with similarity %f below default threshold %f",
+					r.SimilarityScore, DefaultMinSimilarity)
+			}
+		}
+	})
+
+	t.Run("custom high threshold filters more results", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query:         "deployment topic",
+			Mode:          ModeSemantic,
+			Limit:         10,
+			MinSimilarity: 0.80,
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		// Only the high-similarity message should pass
+		for _, r := range resp.Results {
+			if r.SimilarityScore < 0.80 {
+				t.Errorf("result with similarity %f below custom threshold 0.80",
+					r.SimilarityScore)
+			}
+		}
+	})
+
+	t.Run("very low threshold returns all results", func(t *testing.T) {
+		resp, err := svc.Search(ctx, "searcher", SearchOptions{
+			Query:         "deployment topic",
+			Mode:          ModeSemantic,
+			Limit:         10,
+			MinSimilarity: 0.01,
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if len(resp.Results) < 2 {
+			t.Errorf("expected both messages with low threshold, got %d", len(resp.Results))
+		}
+	})
+}
+
+func TestMergeRRF(t *testing.T) {
+	mkResult := func(id int64, matchType string) *SearchResult {
+		return &SearchResult{
+			Message:   &messaging.Message{ID: id},
+			MatchType: matchType,
+		}
+	}
+
+	t.Run("deduplicates and boosts overlapping results", func(t *testing.T) {
+		sem := []*SearchResult{mkResult(1, ModeSemantic), mkResult(2, ModeSemantic), mkResult(3, ModeSemantic)}
+		ft := []*SearchResult{mkResult(2, ModeFulltext), mkResult(4, ModeFulltext), mkResult(1, ModeFulltext)}
+
+		merged := mergeRRF(sem, ft, 10)
+
+		// IDs 1 and 2 appear in both — should be ranked higher
+		if len(merged) != 4 {
+			t.Fatalf("expected 4 merged results, got %d", len(merged))
+		}
+		// Top results should be the overlapping ones (higher RRF score)
+		topIDs := map[int64]bool{merged[0].Message.ID: true, merged[1].Message.ID: true}
+		if !topIDs[1] || !topIDs[2] {
+			t.Errorf("expected IDs 1 and 2 at top, got %d and %d", merged[0].Message.ID, merged[1].Message.ID)
+		}
+	})
+
+	t.Run("respects limit", func(t *testing.T) {
+		sem := []*SearchResult{mkResult(1, ModeSemantic), mkResult(2, ModeSemantic)}
+		ft := []*SearchResult{mkResult(3, ModeFulltext), mkResult(4, ModeFulltext)}
+
+		merged := mergeRRF(sem, ft, 2)
+		if len(merged) != 2 {
+			t.Fatalf("expected 2 results with limit=2, got %d", len(merged))
+		}
+	})
+
+	t.Run("marks overlapping results as hybrid", func(t *testing.T) {
+		sem := []*SearchResult{mkResult(1, ModeSemantic)}
+		ft := []*SearchResult{mkResult(1, ModeFulltext)}
+
+		merged := mergeRRF(sem, ft, 10)
+		if len(merged) != 1 {
+			t.Fatalf("expected 1 merged result, got %d", len(merged))
+		}
+		if merged[0].MatchType != "hybrid" {
+			t.Errorf("match_type = %q, want %q", merged[0].MatchType, "hybrid")
 		}
 	})
 }
