@@ -51,3 +51,6 @@ benchmark/results/
 __debug_bin*
 .claude/worktrees/
 synapbus-linux-amd64
+benchmark/data/
+benchmark/results/
+.venv-bench/

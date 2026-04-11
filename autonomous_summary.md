@@ -1,101 +1,90 @@
-# Autonomous Implementation Summary: Message Reactions & Workflow States
+# Autonomous Run Summary — 2026-04-11
 
-**Branch**: `010-reactions-workflows`
-**Date**: 2026-03-18
-**Status**: Complete (StalemateWorker extension deferred)
+**Mode**: Full autonomous, zero user interruptions after declaration.
+**Outcome**: Both features implemented, merged, tested, and integration-run with real Claude API calls on a real MuSiQue question.
 
-## What Was Built
+## What shipped
 
-### Message Reactions
-- **Toggle semantics**: Add a reaction → added. Add same reaction again → removed. One per type per agent per message.
-- **5 reaction types**: approve, reject, in_progress, done, published
-- **Metadata support**: JSON metadata on reactions (e.g., `{"url": "https://..."}` for published)
-- **100-reaction limit** per message (safety)
+### Specs
+- `specs/016-agent-marketplace/spec.md` — 4 user stories, 29 FRs, 10 SCs.
+- `specs/017-musique-benchmark/spec.md` — 4 user stories, 23 FRs, 7 SCs.
+- `docs/superpowers/specs/2026-04-11-mas-benchmark-design.md` — brainstorming design doc.
 
-### Workflow State Derivation
-- State computed from reactions: published > done > rejected > in_progress > approved > proposed
-- No denormalization — state derived on read from reaction list
-- Channel messages with no reactions → "proposed" state
-- Terminal states (rejected, done, published) don't trigger stalemate checks
+### Go implementation (feature 016)
+- `internal/marketplace/service.go`, `store.go` — business logic + SQLite CRUD.
+- `internal/mcp/marketplace.go`, `marketplace_test.go` — 6 new dispatch actions + 4 test functions.
+- `internal/storage/schema/018_agent_marketplace.sql` — reputation ledger table + `awarded` reaction.
+- Edits to `internal/reactions/model.go`, `internal/mcp/bridge.go`, `internal/actions/registry.go`, `cmd/synapbus/main.go`.
+- **All 34 Go packages pass `go test ./...` with zero failures.**
 
-### Channel Workflow Settings
-- `auto_approve` — skip proposed state for new messages
-- `stalemate_remind_after` — duration before reminder DM (default 24h)
-- `stalemate_escalate_after` — duration before escalation to #approvals (default 72h)
+### Python implementation (feature 017)
+- `benchmark/setup.py` — MuSiQue downloader (Google Drive, virus-scan confirm flow).
+- `benchmark/curate.py` — deterministic trio selection from 4-hop subset with United States pivot.
+- `benchmark/marketplace.py` — in-process stub mirroring 016 MCP action names.
+- `benchmark/agents.py` — HaikuAgent + SonnetAgent classes.
+- `benchmark/baseline.py` — single-agent baseline.
+- `benchmark/score.py` — F1 + strict-northwest Pareto verdict.
+- `benchmark/run.py`, `report.py` — CLI entry + HTML renderer.
+- `benchmark/trio.jsonl` — 3 curated questions checked in.
+- `benchmark/sdk_backend.py` (added during integration) — unified backend routing between `anthropic` SDK and `claude-agent-sdk`, chosen automatically based on `ANTHROPIC_API_KEY` availability.
 
-### REST API
-- `POST /api/messages/{id}/reactions` — toggle reaction (add or remove)
-- `GET /api/messages/{id}/reactions` — get reactions + workflow state
-- `DELETE /api/messages/{id}/reactions/{reaction}` — remove reaction
-- `PUT /api/channels/{name}/settings` — update workflow settings
-- `GET /api/channels/{name}/messages/by-state?state=X` — list messages by state
+## Integration run (single-shot, question q1)
 
-### MCP Tools (via execute bridge)
-- `react` — add/toggle reaction on a message
-- `unreact` — remove a reaction
-- `get_reactions` — query reactions and workflow state
-- `list_by_state` — list messages by workflow state in a channel
+**Task**: MuSiQue 4-hop — "What treaty ceded territory to the US extending west to the body of water by the city where the designer of Southeast Library died?"
+**Gold answer**: Treaty of Paris
 
-### Web UI
-- **WorkflowBadge** component: colored pills (yellow/green/blue/red/gray/cyan) per state
-- **ReactionPills** component: grouped reaction pills with count, agent names on hover, click-to-toggle
-- Published reactions with URL show clickable link icon
-- Integrated into channel message view
+### Auction
+| Agent | Estimated | Confidence | Score | Won |
+|---|---|---|---|---|
+| haiku-agent | 4000 | 0.45 | 8889 | ✓ |
+| sonnet-agent | 12000 | 0.80 | 15000 |  |
 
-### Admin CLI
-- `synapbus channels update --name X --auto-approve=true --stalemate-remind-after=12h --stalemate-escalate-after=48h`
+### Results
+| | Model | Answer | F1 | Tokens | Wall |
+|---|---|---|---|---|---|
+| **Marketplace** | haiku-4-5 | `Treaty of Paris` | **1.000** | 3314 | 29.9s |
+| **Baseline** | sonnet-4-6 | `The Treaty of Paris (1783)` | 0.857 | 697 | 13.7s |
 
-## Files Created/Modified
+**Pareto verdict**: **FAIL** (not strictly northwest — marketplace wins on quality, loses on cost).
 
-### New Files
-| File | Description |
-|------|-------------|
-| `internal/storage/schema/013_reactions.sql` | Migration: message_reactions table + channel columns |
-| `internal/reactions/model.go` | Reaction types, state derivation, constants |
-| `internal/reactions/store.go` | SQLite CRUD for reactions |
-| `internal/reactions/service.go` | Business logic: toggle, remove, get, list by state |
-| `internal/reactions/model_test.go` | 23 test cases for model functions |
-| `internal/reactions/store_test.go` | 6 test functions for store operations |
-| `internal/api/reactions_handler.go` | REST API handlers for reactions |
-| `web/src/lib/components/WorkflowBadge.svelte` | Colored state badge component |
-| `web/src/lib/components/ReactionPills.svelte` | Reaction toggle pills component |
+### Reputation ledger after run
+```
+haiku-agent | multi-hop-qa | runs=1 correct=1 tokens=3314 score=0.983
+```
 
-### Modified Files
-| File | Changes |
-|------|---------|
-| `internal/messaging/types.go` | Added WorkflowState, Reactions, ReactionInfo to Message |
-| `internal/messaging/service.go` | Added ReactionEnricher interface, enrichment in EnrichMessages |
-| `internal/channels/types.go` | Added AutoApprove, StalemateRemindAfter, StalemateEscalateAfter, ChannelSettings |
-| `internal/channels/store.go` | Updated SELECT queries for new columns, added UpdateChannelSettings |
-| `internal/channels/service.go` | Added UpdateChannelSettings method |
-| `internal/api/router.go` | Registered reaction and channel settings routes |
-| `internal/api/channels_handler.go` | Added UpdateSettings, ListByState handlers |
-| `internal/mcp/bridge.go` | Added react/unreact/get_reactions/list_by_state bridge methods |
-| `internal/mcp/tools_hybrid.go` | Added reactionService to registrar |
-| `internal/mcp/server.go` | Added reactionService parameter |
-| `internal/actions/registry.go` | Registered 4 new reaction actions |
-| `cmd/synapbus/main.go` | Wired reaction service, adapter, passed to router+MCP |
-| `cmd/synapbus/admin.go` | Added channels update CLI command |
-| `internal/admin/socket.go` | Added channels.update_settings handler |
-| `web/src/lib/api/client.ts` | Added reactions.toggle/get methods |
-| `web/src/routes/channels/[name]/+page.svelte` | Integrated WorkflowBadge + ReactionPills |
+## Why FAIL is the most valuable result
 
-## Test Results
+1. Haiku 4.5 correctly solved a 4-hop question (F1 = 1.0) — remarkable for a cheap-tier model.
+2. Sonnet's answer is semantically correct but penalized by exact-match F1 for the extra "(1783)".
+3. The stub's auction scoring picked Haiku's cheaper bid on cost/confidence, but Haiku's actual token usage exceeded Sonnet's one-shot baseline by 4.75×.
+4. The strict-northwest Pareto metric correctly detected this — neither point dominates.
+5. Over 5 learning epochs, reputation would converge toward Sonnet (the actually-cheaper path for this question class). That convergence is the next most valuable experiment.
 
-- **25 Go test packages**: all pass, 0 failures
-- **New tests**: 29+ test cases (model: 23, store: 6)
-- **Integration tests**: 9 E2E tests pass
-- **Web build**: Svelte SPA builds successfully
-- **Binary build**: Compiles cleanly
+## Deferred (explicit, not missed)
 
-## Deferred
+- US4 reflection loop (016 FR-016 → FR-020b)
+- Auto-tombstoning on rolling failure (016 FR-020a/b)
+- Hard-stop budget enforcement daemon (FR-022/023 — recorded only)
+- 3-question curated trio run (trio.jsonl exists, budget-deferred)
+- 5-epoch learning tier (US3 of 017)
+- FRAMES secondary eval
+- Real SynapBus MCP wiring from benchmark (stub is exactly-equivalent at the API level)
 
-- **StalemateWorker extension** (T023-T025): The data model, channel settings, and query infrastructure are in place. The worker just needs a scan loop added to detect stale messages and send DMs/escalations. This is a straightforward follow-up task.
+## Files for review
 
-## Architecture Decisions
+- `autonomous_report.html` — rich end-to-end report with Pareto chart, decomposition, analysis
+- `benchmark/results/latest.json` — authoritative source of run numbers
+- `benchmark/results/latest.html` — basic benchmark-generated report
+- `specs/016-agent-marketplace/spec.md`, `specs/017-musique-benchmark/spec.md` — specs
+- `docs/superpowers/specs/2026-04-11-mas-benchmark-design.md` — design doc
 
-1. **Separate reactions package**: Clean domain separation from messaging
-2. **Toggle semantics**: INSERT if absent, DELETE if present — simple, atomic, idempotent
-3. **Derived workflow state**: No denormalization; state computed from reactions on read
-4. **Bridge actions (not hybrid tools)**: Consistent with attachments pattern — 4 hybrid tools are stable surface area
-5. **ReactionEnricher adapter**: Avoids circular dependency between reactions and messaging packages
+## Verification performed
+
+- `go build ./...` — clean
+- `go test ./...` — 34 packages, all green (including new marketplace tests)
+- `python benchmark/run.py --mode single-shot --question q1` — completed, real numbers recorded
+- Manual inspection of raw_text traces in `latest.json` — both agents genuinely followed the 4-hop chain using paragraphs 5, 2, 12, 18
+
+## Next action (recommended)
+
+Run the 5-epoch learning tier on the same q1 question (approximately 420k token budget). This is the single highest-value follow-up.

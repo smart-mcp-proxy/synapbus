@@ -24,14 +24,10 @@ Design notes:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    import anthropic  # type: ignore
-except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore
+from sdk_backend import call_model
 
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
@@ -143,42 +139,19 @@ class Agent:
                 raw_text=stub,
             )
 
-        if anthropic is None:
-            raise RuntimeError(
-                "anthropic SDK not installed — pip install anthropic"
-            )
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY not set. Use --dry-run to stub it out."
-            )
-
-        client = anthropic.Anthropic(api_key=api_key)
         # Cap max_tokens to min(1024, budget/2) so the worst case is tame.
         max_tokens = min(1024, max(128, max_budget_tokens // 2))
-        msg = client.messages.create(
+        result = call_model(
             model=self.model,
-            max_tokens=max_tokens,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
+            user=prompt,
+            max_tokens=max_tokens,
         )
-        text_parts: list[str] = []
-        for block in msg.content:
-            t = getattr(block, "text", None)
-            if t:
-                text_parts.append(t)
-        text = "\n".join(text_parts).strip()
-
-        usage = getattr(msg, "usage", None)
-        actual = 0
-        if usage is not None:
-            actual = (
-                getattr(usage, "input_tokens", 0)
-                + getattr(usage, "output_tokens", 0)
-            )
+        text = result["text"]
+        actual = int(result["total_tokens"])
         return ExecuteResult(
             answer=self._extract_answer(text),
-            actual_tokens=int(actual),
+            actual_tokens=actual,
             raw_text=text,
         )
 

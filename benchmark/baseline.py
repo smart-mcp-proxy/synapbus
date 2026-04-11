@@ -9,13 +9,9 @@ Returns {"answer": str, "tokens": int, "raw_text": str}.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-try:
-    import anthropic  # type: ignore
-except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore
+from sdk_backend import call_model
 
 
 BASELINE_MODEL = "claude-sonnet-4-6"
@@ -82,35 +78,17 @@ def run_baseline(
             "model": BASELINE_MODEL,
         }
 
-    if anthropic is None:
-        raise RuntimeError("anthropic SDK not installed")
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-
-    client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
+    result = call_model(
         model=BASELINE_MODEL,
-        max_tokens=max_output_tokens,
         system=BASELINE_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+        user=prompt,
+        max_tokens=max_output_tokens,
     )
-    text_parts: list[str] = []
-    for block in msg.content:
-        t = getattr(block, "text", None)
-        if t:
-            text_parts.append(t)
-    text = "\n".join(text_parts).strip()
-    usage = getattr(msg, "usage", None)
-    tokens = 0
-    if usage is not None:
-        tokens = (
-            getattr(usage, "input_tokens", 0)
-            + getattr(usage, "output_tokens", 0)
-        )
+    text = result["text"]
+    tokens = int(result["total_tokens"])
     return {
         "answer": _extract_answer(text),
-        "tokens": int(tokens),
+        "tokens": tokens,
         "raw_text": text,
         "model": BASELINE_MODEL,
     }
