@@ -41,6 +41,12 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+# Benchmark (017) — large datasets, per-run outputs, local venvs
+benchmark/data/
+benchmark/results/
+.venv-bench/
+.venv/
+
 # Debug
 __debug_bin*
 .claude/worktrees/
