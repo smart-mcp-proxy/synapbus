@@ -303,6 +303,75 @@ func TestSubprocess_Execute_NoLocalCommand(t *testing.T) {
 	}
 }
 
+func TestSubprocess_Execute_MaterialisesHarnessConfig(t *testing.T) {
+	requirePosix(t)
+
+	baseDir := t.TempDir()
+	h := subprocess.New(subprocess.Config{BaseDir: baseDir, KeepWorkdirOnSuccess: true}, nil)
+
+	cfg := `{
+		"claude_md": "You are tester",
+		"mcp_servers": [
+			{"name":"synapbus","type":"http","url":"http://kubic:30088/mcp"}
+		],
+		"skills": [
+			{"name":"debugging","content":"---\nname: debugging\n---\nbody"}
+		],
+		"env": {"AGENT_GREETING":"hello"}
+	}`
+	agent := &agents.Agent{
+		Name:              "e2e",
+		LocalCommand:      `["sh","-c","cat CLAUDE.md >> result.out; cat .mcp.json >> result.out; cat .claude/skills/debugging/SKILL.md >> result.out; echo GREETING=$AGENT_GREETING >> result.out; echo ok"]`,
+		HarnessConfigJSON: cfg,
+	}
+	req := &harness.ExecRequest{
+		RunID:     "e2e-run",
+		AgentName: "e2e",
+		Agent:     agent,
+	}
+	res, err := h.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute err = %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d", res.ExitCode)
+	}
+
+	out, err := os.ReadFile(filepath.Join(baseDir, "e2e-run", "result.out"))
+	if err != nil {
+		t.Fatalf("read result.out: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"You are tester",
+		`"synapbus"`,
+		"http://kubic:30088/mcp",
+		"name: debugging",
+		"GREETING=hello",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("result.out missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSubprocess_Execute_InvalidHarnessConfigErrors(t *testing.T) {
+	h := subprocess.New(subprocess.Config{BaseDir: t.TempDir()}, nil)
+	req := &harness.ExecRequest{
+		RunID:     "r",
+		AgentName: "a",
+		Agent: &agents.Agent{
+			Name:              "a",
+			LocalCommand:      `["sh","-c","true"]`,
+			HarnessConfigJSON: "not-json",
+		},
+	}
+	_, err := h.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected parse error for invalid harness_config_json")
+	}
+}
+
 func TestSubprocess_Execute_AcceptsWhitespaceArgvForm(t *testing.T) {
 	requirePosix(t)
 

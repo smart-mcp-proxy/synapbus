@@ -77,6 +77,73 @@ func TestSQLiteAgentStore_CreateAndGet(t *testing.T) {
 	}
 }
 
+func TestSQLiteAgentStore_UpdateHarnessConfig(t *testing.T) {
+	db := newTestDB(t)
+	store := NewSQLiteAgentStore(db)
+	ctx := context.Background()
+
+	agent := &Agent{
+		Name:        "harness-bot",
+		DisplayName: "Harness Bot",
+		Type:        "ai",
+		OwnerID:     1,
+		APIKeyHash:  "h",
+	}
+	if err := store.CreateAgent(ctx, agent); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	// Set all three fields at once.
+	cfgJSON := `{"claude_md":"You are X","env":{"FOO":"1"}}`
+	if err := store.UpdateHarnessConfig(ctx, "harness-bot", "subprocess", `["sh","-c","true"]`, cfgJSON); err != nil {
+		t.Fatalf("UpdateHarnessConfig: %v", err)
+	}
+	got, _ := store.GetAgentByName(ctx, "harness-bot")
+	if got.HarnessName != "subprocess" {
+		t.Errorf("HarnessName = %q", got.HarnessName)
+	}
+	if got.LocalCommand != `["sh","-c","true"]` {
+		t.Errorf("LocalCommand = %q", got.LocalCommand)
+	}
+	if got.HarnessConfigJSON != cfgJSON {
+		t.Errorf("HarnessConfigJSON = %q", got.HarnessConfigJSON)
+	}
+
+	// Partial update: only local_command changes.
+	if err := store.UpdateHarnessConfig(ctx, "harness-bot", "", `["claude","--print"]`, ""); err != nil {
+		t.Fatalf("UpdateHarnessConfig partial: %v", err)
+	}
+	got, _ = store.GetAgentByName(ctx, "harness-bot")
+	if got.LocalCommand != `["claude","--print"]` {
+		t.Errorf("LocalCommand after partial = %q", got.LocalCommand)
+	}
+	if got.HarnessName != "subprocess" {
+		t.Errorf("HarnessName should be unchanged: %q", got.HarnessName)
+	}
+	if got.HarnessConfigJSON != cfgJSON {
+		t.Errorf("HarnessConfigJSON should be unchanged")
+	}
+
+	// Clear harness_config_json via "-"
+	if err := store.UpdateHarnessConfig(ctx, "harness-bot", "", "", "-"); err != nil {
+		t.Fatalf("UpdateHarnessConfig clear: %v", err)
+	}
+	got, _ = store.GetAgentByName(ctx, "harness-bot")
+	if got.HarnessConfigJSON != "" {
+		t.Errorf("HarnessConfigJSON not cleared: %q", got.HarnessConfigJSON)
+	}
+
+	// Unknown agent → sql.ErrNoRows.
+	if err := store.UpdateHarnessConfig(ctx, "no-such-agent", "subprocess", "", ""); err == nil {
+		t.Error("expected ErrNoRows for missing agent")
+	}
+
+	// No fields → no-op (no error).
+	if err := store.UpdateHarnessConfig(ctx, "harness-bot", "", "", ""); err != nil {
+		t.Errorf("no-field update: %v", err)
+	}
+}
+
 func TestSQLiteAgentStore_DuplicateName(t *testing.T) {
 	db := newTestDB(t)
 	store := NewSQLiteAgentStore(db)

@@ -153,9 +153,21 @@ func (h *Harness) Execute(ctx context.Context, req *harness.ExecRequest) (*harne
 		_ = os.WriteFile(filepath.Join(workdir, "message.json"), raw, 0o644)
 	}
 
+	// Materialise the agent's declarative config (CLAUDE.md, AGENTS.md,
+	// .mcp.json, .claude/skills/*, .claude/agents/*) into the workdir.
+	// The child's CLI (claude, gemini, codex) finds them via the
+	// conventions it already uses.
+	cfg, err := ParseAgentConfig(req.Agent.HarnessConfigJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := MaterialiseAgentConfig(workdir, cfg); err != nil {
+		return nil, err
+	}
+
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = workdir
-	cmd.Env = buildEnv(req, workdir)
+	cmd.Env = buildEnv(req, workdir, cfg)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = io.MultiWriter(&stdout, limitedFileWriter(workdir, "stdout.log"))
@@ -261,9 +273,10 @@ func parseLocalCommand(raw string) ([]string, error) {
 // buildEnv constructs the env var list for the child. Starts from the
 // parent's environment (so HOME, PATH, credentials are inherited by
 // default — matches current K8s Pod behaviour). Then layers the
-// agent's k8s_env_json (for consistency between backends), then caller
-// overrides, then the SYNAPBUS_* run-context variables.
-func buildEnv(req *harness.ExecRequest, workdir string) []string {
+// agent's k8s_env_json (for cross-backend consistency), then the
+// harness_config_json `env` block (per-agent harness-specific env),
+// then caller overrides, then the SYNAPBUS_* run-context variables.
+func buildEnv(req *harness.ExecRequest, workdir string, cfg AgentConfig) []string {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
 		if i := strings.IndexByte(kv, '='); i >= 0 {
@@ -284,6 +297,11 @@ func buildEnv(req *harness.ExecRequest, workdir string) []string {
 				env[k] = strings.Trim(string(v), "\"")
 			}
 		}
+	}
+
+	// harness_config_json env block
+	for k, v := range cfg.Env {
+		env[k] = v
 	}
 
 	// caller overrides

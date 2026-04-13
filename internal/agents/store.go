@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // AgentStore defines the storage interface for agent operations.
@@ -25,6 +26,11 @@ type AgentStore interface {
 	UpdateK8sImage(ctx context.Context, name, image, envJSON, preset string) error
 	SetPendingWork(ctx context.Context, name string, pending bool) error
 	ListReactiveAgents(ctx context.Context) ([]*Agent, error)
+
+	// Harness config (migration 019). Pass empty strings to leave a
+	// field unchanged; pass a blank placeholder ("-") to explicitly
+	// clear it. Returns sql.ErrNoRows if the agent doesn't exist.
+	UpdateHarnessConfig(ctx context.Context, name, harnessName, localCommand, harnessConfigJSON string) error
 }
 
 // SQLiteAgentStore implements AgentStore using SQLite.
@@ -105,6 +111,57 @@ func (s *SQLiteAgentStore) UpdateK8sImage(ctx context.Context, name, image, envJ
 		image, envJSON, preset, name,
 	)
 	return err
+}
+
+// UpdateHarnessConfig updates any subset of harness_name / local_command /
+// harness_config_json for an agent. Pass empty string to leave a field
+// unchanged; pass "-" to explicitly clear (set to NULL).
+func (s *SQLiteAgentStore) UpdateHarnessConfig(ctx context.Context, name, harnessName, localCommand, harnessConfigJSON string) error {
+	sets := []string{}
+	args := []any{}
+	if harnessName != "" {
+		sets = append(sets, "harness_name = ?")
+		if harnessName == "-" {
+			args = append(args, nil)
+		} else {
+			args = append(args, harnessName)
+		}
+	}
+	if localCommand != "" {
+		sets = append(sets, "local_command = ?")
+		if localCommand == "-" {
+			args = append(args, nil)
+		} else {
+			args = append(args, localCommand)
+		}
+	}
+	if harnessConfigJSON != "" {
+		sets = append(sets, "harness_config_json = ?")
+		if harnessConfigJSON == "-" {
+			args = append(args, nil)
+		} else {
+			args = append(args, harnessConfigJSON)
+		}
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, name)
+	query := "UPDATE agents SET " + strings.Join(sets, ", ") + " WHERE name = ? AND status = 'active'"
+
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update harness config: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetPendingWork sets the pending_work flag for an agent.

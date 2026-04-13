@@ -218,6 +218,12 @@ func (s *AdminServer) dispatch(req Request) Response {
 	case "attachments.gc":
 		return s.handleAttachmentsGC(ctx)
 
+	// --- harness config (subprocess / webhook agent config) ---
+	case "harness.config_get":
+		return s.handleHarnessConfigGet(ctx, req.Args)
+	case "harness.config_set":
+		return s.handleHarnessConfigSet(ctx, req.Args)
+
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %s", req.Command)}
 	}
@@ -1688,6 +1694,98 @@ func (s *AdminServer) handleAttachmentsGC(ctx context.Context) Response {
 	return Response{OK: true, Data: map[string]interface{}{
 		"files_removed":  result.FilesRemoved,
 		"bytes_reclaimed": result.BytesReclaimed,
+	}}
+}
+
+// ---------- harness config handlers ----------
+
+func (s *AdminServer) handleHarnessConfigGet(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		AgentName string `json:"agent_name"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.AgentName == "" {
+		return Response{OK: false, Error: "agent_name is required"}
+	}
+	agent, err := s.services.Agents.GetAgent(ctx, p.AgentName)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+	// Parse harness_config_json if present so the caller gets
+	// structured output instead of an opaque string. Tolerate empty.
+	var parsed any
+	if agent.HarnessConfigJSON != "" {
+		if err := json.Unmarshal([]byte(agent.HarnessConfigJSON), &parsed); err != nil {
+			// Return raw + parse error, not a hard failure — callers
+			// might legitimately want to see broken config to fix it.
+			return Response{OK: true, Data: map[string]any{
+				"agent_name":          agent.Name,
+				"harness_name":        agent.HarnessName,
+				"local_command":       agent.LocalCommand,
+				"harness_config_json": agent.HarnessConfigJSON,
+				"parse_error":         err.Error(),
+			}}
+		}
+	}
+	return Response{OK: true, Data: map[string]any{
+		"agent_name":          agent.Name,
+		"harness_name":        agent.HarnessName,
+		"local_command":       agent.LocalCommand,
+		"harness_config_json": agent.HarnessConfigJSON,
+		"harness_config":      parsed,
+	}}
+}
+
+func (s *AdminServer) handleHarnessConfigSet(ctx context.Context, args json.RawMessage) Response {
+	var p struct {
+		AgentName         string          `json:"agent_name"`
+		HarnessName       string          `json:"harness_name"`
+		LocalCommand      string          `json:"local_command"`
+		HarnessConfigJSON json.RawMessage `json:"harness_config_json"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return Response{OK: false, Error: "invalid args: " + err.Error()}
+	}
+	if p.AgentName == "" {
+		return Response{OK: false, Error: "agent_name is required"}
+	}
+
+	// Validate harness_config_json shape when provided. An empty object
+	// ({}) and null are both valid (clear with "-"); otherwise it must
+	// parse as JSON.
+	configJSON := ""
+	if len(p.HarnessConfigJSON) > 0 {
+		raw := strings.TrimSpace(string(p.HarnessConfigJSON))
+		switch raw {
+		case "", "null":
+			configJSON = "-"
+		case `"-"`:
+			configJSON = "-"
+		default:
+			if !json.Valid(p.HarnessConfigJSON) {
+				return Response{OK: false, Error: "harness_config_json is not valid JSON"}
+			}
+			configJSON = string(p.HarnessConfigJSON)
+		}
+	}
+
+	// Delegate to the store. Empty strings mean "leave unchanged",
+	// "-" means "clear".
+	if err := s.services.Agents.Store().UpdateHarnessConfig(ctx, p.AgentName, p.HarnessName, p.LocalCommand, configJSON); err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+
+	agent, err := s.services.Agents.GetAgent(ctx, p.AgentName)
+	if err != nil {
+		return Response{OK: false, Error: err.Error()}
+	}
+	return Response{OK: true, Data: map[string]any{
+		"agent_name":          agent.Name,
+		"harness_name":        agent.HarnessName,
+		"local_command":       agent.LocalCommand,
+		"harness_config_json": agent.HarnessConfigJSON,
 	}}
 }
 

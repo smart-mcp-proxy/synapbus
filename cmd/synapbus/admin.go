@@ -3,12 +3,14 @@ package main
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -1073,10 +1075,213 @@ func addAdminCommands(rootCmd *cobra.Command) {
 
 	attachmentsCmd.AddCommand(attachmentsGCCmd, attachmentsBackupCmd, attachmentsRestoreCmd)
 
+	// ----- harness commands -----
+	harnessCmd := &cobra.Command{
+		Use:   "harness",
+		Short: "Manage per-agent harness configuration (subprocess / webhook backends)",
+	}
+
+	harnessConfigCmd := &cobra.Command{
+		Use:   "config",
+		Short: "Read / write the harness config for an agent",
+	}
+
+	var harnessConfigGetAgent string
+	var harnessConfigGetRaw bool
+	harnessConfigGetCmd := &cobra.Command{
+		Use:   "get",
+		Short: "Print an agent's harness_name, local_command, and harness_config_json",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("harness.config_get", map[string]any{
+				"agent_name": harnessConfigGetAgent,
+			})
+			if err != nil {
+				return err
+			}
+			data, _ := resp["data"].(map[string]any)
+			if harnessConfigGetRaw {
+				// Print just the harness_config_json string — suitable
+				// for piping into `set` after editing.
+				if s, ok := data["harness_config_json"].(string); ok {
+					fmt.Println(s)
+				}
+				return nil
+			}
+			printJSON(data)
+			return nil
+		},
+	}
+	harnessConfigGetCmd.Flags().StringVar(&harnessConfigGetAgent, "agent", "", "Agent name")
+	harnessConfigGetCmd.Flags().BoolVar(&harnessConfigGetRaw, "raw", false, "Print only the harness_config_json string (no envelope)")
+	_ = harnessConfigGetCmd.MarkFlagRequired("agent")
+
+	var (
+		harnessConfigSetAgent        string
+		harnessConfigSetHarnessName  string
+		harnessConfigSetLocalCommand string
+		harnessConfigSetFile         string
+		harnessConfigSetClear        bool
+	)
+	harnessConfigSetCmd := &cobra.Command{
+		Use:   "set",
+		Short: "Update an agent's harness config. Reads JSON from --file or stdin.",
+		Long: `Update an agent's harness_name, local_command, and/or harness_config_json.
+
+Fields left unset are unchanged. To CLEAR a field, use --clear on a set
+that targets only that field, or pass an empty string to the underlying
+admin call.
+
+Examples:
+
+  # Set subprocess backend + local command
+  synapbus harness config set --agent researcher \
+      --harness-name subprocess \
+      --local-command '["claude","--print","--max-turns","50"]'
+
+  # Load harness_config_json from a file (CLAUDE.md, mcp_servers, skills)
+  synapbus harness config set --agent researcher --file ./researcher.json
+
+  # Pipe in from another command
+  cat config.json | synapbus harness config set --agent researcher
+
+  # Clear the harness_config_json
+  synapbus harness config set --agent researcher --clear`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reqArgs := map[string]any{"agent_name": harnessConfigSetAgent}
+			if harnessConfigSetHarnessName != "" {
+				reqArgs["harness_name"] = harnessConfigSetHarnessName
+			}
+			if harnessConfigSetLocalCommand != "" {
+				reqArgs["local_command"] = harnessConfigSetLocalCommand
+			}
+
+			var configBytes []byte
+			if harnessConfigSetClear {
+				reqArgs["harness_config_json"] = json.RawMessage(`"-"`)
+			} else if harnessConfigSetFile != "" {
+				b, err := os.ReadFile(harnessConfigSetFile)
+				if err != nil {
+					return fmt.Errorf("read --file: %w", err)
+				}
+				configBytes = b
+			} else {
+				// If stdin has data, read it. Otherwise just send the
+				// other flags and leave harness_config_json unchanged.
+				stat, _ := os.Stdin.Stat()
+				if (stat.Mode() & os.ModeCharDevice) == 0 {
+					b, err := io.ReadAll(os.Stdin)
+					if err != nil {
+						return fmt.Errorf("read stdin: %w", err)
+					}
+					if len(bytes.TrimSpace(b)) > 0 {
+						configBytes = b
+					}
+				}
+			}
+			if len(configBytes) > 0 {
+				if !json.Valid(configBytes) {
+					return fmt.Errorf("harness_config_json is not valid JSON")
+				}
+				reqArgs["harness_config_json"] = json.RawMessage(configBytes)
+			}
+
+			resp, err := adminRequest("harness.config_set", reqArgs)
+			if err != nil {
+				return err
+			}
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	harnessConfigSetCmd.Flags().StringVar(&harnessConfigSetAgent, "agent", "", "Agent name")
+	harnessConfigSetCmd.Flags().StringVar(&harnessConfigSetHarnessName, "harness-name", "", "Backend (k8sjob / subprocess / webhook)")
+	harnessConfigSetCmd.Flags().StringVar(&harnessConfigSetLocalCommand, "local-command", "", "JSON argv for subprocess backend")
+	harnessConfigSetCmd.Flags().StringVar(&harnessConfigSetFile, "file", "", "Path to harness_config_json file")
+	harnessConfigSetCmd.Flags().BoolVar(&harnessConfigSetClear, "clear", false, "Clear harness_config_json (set to NULL)")
+	_ = harnessConfigSetCmd.MarkFlagRequired("agent")
+
+	var harnessConfigEditAgent string
+	harnessConfigEditCmd := &cobra.Command{
+		Use:   "edit",
+		Short: "Open the current harness_config_json in $EDITOR and save on exit",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := adminRequest("harness.config_get", map[string]any{
+				"agent_name": harnessConfigEditAgent,
+			})
+			if err != nil {
+				return err
+			}
+			data, _ := resp["data"].(map[string]any)
+			current, _ := data["harness_config_json"].(string)
+			if current == "" {
+				current = "{}"
+			} else {
+				// Pretty-print for a better editing experience.
+				var pretty any
+				if err := json.Unmarshal([]byte(current), &pretty); err == nil {
+					if b, err := json.MarshalIndent(pretty, "", "  "); err == nil {
+						current = string(b)
+					}
+				}
+			}
+
+			tmp, err := os.CreateTemp("", "synapbus-harness-*.json")
+			if err != nil {
+				return err
+			}
+			tmpPath := tmp.Name()
+			defer os.Remove(tmpPath)
+			if _, err := tmp.WriteString(current); err != nil {
+				tmp.Close()
+				return err
+			}
+			tmp.Close()
+
+			editor := os.Getenv("VISUAL")
+			if editor == "" {
+				editor = os.Getenv("EDITOR")
+			}
+			if editor == "" {
+				editor = "vi"
+			}
+			editCmd := exec.Command("sh", "-c", editor+" "+tmpPath)
+			editCmd.Stdin = os.Stdin
+			editCmd.Stdout = os.Stdout
+			editCmd.Stderr = os.Stderr
+			if err := editCmd.Run(); err != nil {
+				return fmt.Errorf("editor: %w", err)
+			}
+
+			edited, err := os.ReadFile(tmpPath)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(edited) {
+				return fmt.Errorf("edited file is not valid JSON — aborting (nothing saved)")
+			}
+
+			resp, err = adminRequest("harness.config_set", map[string]any{
+				"agent_name":          harnessConfigEditAgent,
+				"harness_config_json": json.RawMessage(edited),
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Println("saved")
+			printJSON(resp["data"])
+			return nil
+		},
+	}
+	harnessConfigEditCmd.Flags().StringVar(&harnessConfigEditAgent, "agent", "", "Agent name")
+	_ = harnessConfigEditCmd.MarkFlagRequired("agent")
+
+	harnessConfigCmd.AddCommand(harnessConfigGetCmd, harnessConfigSetCmd, harnessConfigEditCmd)
+	harnessCmd.AddCommand(harnessConfigCmd)
+
 	// ----- add persistent flag and commands to root -----
 	rootCmd.PersistentFlags().StringVar(&adminSocket, "socket", "/tmp/synapbus.sock", "Path to admin Unix socket")
 
-	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd, embeddingsCmd, dbCmd, retentionCmd, webhookCmd, k8sCmd, attachmentsCmd)
+	rootCmd.AddCommand(userCmd, agentCmd, auditCmd, backupCmd, messagesCmd, channelsCmd, conversationsCmd, embeddingsCmd, dbCmd, retentionCmd, webhookCmd, k8sCmd, attachmentsCmd, harnessCmd)
 }
 
 // toTableRows remaps []map[string]string using a header->key mapping.

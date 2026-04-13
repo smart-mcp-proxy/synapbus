@@ -37,6 +37,13 @@ func (s *AgentService) SetDeadLetterStore(dls *messaging.DeadLetterStore) {
 	s.deadLetterStore = dls
 }
 
+// Store returns the underlying AgentStore. Exposed so admin handlers
+// can reach store-level helpers (e.g. UpdateHarnessConfig) that don't
+// warrant full service-level business logic of their own.
+func (s *AgentService) Store() AgentStore {
+	return s.store
+}
+
 // Register creates a new agent with a generated API key.
 // Returns the agent and the raw API key (shown once).
 func (s *AgentService) Register(ctx context.Context, name, displayName, agentType string, capabilities json.RawMessage, ownerID int64) (*Agent, string, error) {

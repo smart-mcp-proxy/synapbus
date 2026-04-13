@@ -466,6 +466,159 @@
 			</div>
 		</div>
 
+		<!-- Harness Configuration (subprocess / webhook / k8sjob) -->
+		{@const resolvedBackend = agent.harness_name || (agent.k8s_image ? 'k8sjob (inferred)' : (agent.local_command ? 'subprocess (inferred)' : (agent.harness_config_json && agent.harness_config_json.includes('"url"') ? 'webhook (inferred)' : 'none')))}
+		{@const parsedHarnessConfig = (() => {
+			if (!agent.harness_config_json) return null;
+			try { return JSON.parse(agent.harness_config_json); } catch { return { _parse_error: 'invalid JSON' }; }
+		})()}
+		<div class="card mb-5">
+			<div class="px-5 py-3 border-b border-border flex items-center justify-between">
+				<h2 class="font-semibold text-sm text-text-primary font-display flex items-center gap-2">
+					<svg class="w-4 h-4 text-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+					</svg>
+					Harness
+				</h2>
+				<span class="badge text-[10px] {resolvedBackend.startsWith('none') ? 'bg-bg-tertiary text-text-secondary' : 'bg-accent-blue/20 text-accent-blue'}">
+					{resolvedBackend}
+				</span>
+			</div>
+			<div class="p-5 space-y-4 text-sm">
+				<div class="grid grid-cols-2 gap-4">
+					<div>
+						<p class="text-xs text-text-secondary mb-0.5">Explicit backend</p>
+						<p class="text-text-primary font-mono text-xs">{agent.harness_name || '—'}</p>
+					</div>
+					<div>
+						<p class="text-xs text-text-secondary mb-0.5">K8s image</p>
+						<p class="text-text-primary font-mono text-xs break-all">{agent.k8s_image || '—'}</p>
+					</div>
+				</div>
+
+				{#if agent.local_command}
+					<div>
+						<p class="text-xs text-text-secondary mb-1">Local command</p>
+						<pre class="text-xs bg-bg-primary p-3 rounded-lg border border-border overflow-x-auto font-mono text-text-primary/80 whitespace-pre-wrap">{agent.local_command}</pre>
+					</div>
+				{/if}
+
+				{#if parsedHarnessConfig}
+					{#if parsedHarnessConfig._parse_error}
+						<div class="px-3 py-2 bg-accent-red/10 rounded text-xs text-accent-red">
+							harness_config_json: {parsedHarnessConfig._parse_error}
+						</div>
+					{:else}
+						<div class="grid grid-cols-4 gap-2">
+							<div class="px-3 py-2 bg-bg-tertiary rounded">
+								<p class="text-[10px] text-text-secondary uppercase tracking-wider">CLAUDE.md</p>
+								<p class="text-xs text-text-primary">{parsedHarnessConfig.claude_md ? `${parsedHarnessConfig.claude_md.length} bytes` : '—'}</p>
+							</div>
+							<div class="px-3 py-2 bg-bg-tertiary rounded">
+								<p class="text-[10px] text-text-secondary uppercase tracking-wider">AGENTS.md</p>
+								<p class="text-xs text-text-primary">{parsedHarnessConfig.agents_md ? `${parsedHarnessConfig.agents_md.length} bytes` : '—'}</p>
+							</div>
+							<div class="px-3 py-2 bg-bg-tertiary rounded">
+								<p class="text-[10px] text-text-secondary uppercase tracking-wider">MCP servers</p>
+								<p class="text-xs text-text-primary">{parsedHarnessConfig.mcp_servers?.length ?? 0}</p>
+							</div>
+							<div class="px-3 py-2 bg-bg-tertiary rounded">
+								<p class="text-[10px] text-text-secondary uppercase tracking-wider">Skills</p>
+								<p class="text-xs text-text-primary">{parsedHarnessConfig.skills?.length ?? 0}</p>
+							</div>
+						</div>
+
+						{#if parsedHarnessConfig.claude_md}
+							<details class="bg-bg-primary border border-border rounded-lg">
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">CLAUDE.md</summary>
+								<pre class="px-3 pb-3 text-xs font-mono text-text-primary/80 whitespace-pre-wrap break-words max-h-80 overflow-y-auto">{parsedHarnessConfig.claude_md}</pre>
+							</details>
+						{/if}
+
+						{#if parsedHarnessConfig.agents_md}
+							<details class="bg-bg-primary border border-border rounded-lg">
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">AGENTS.md</summary>
+								<pre class="px-3 pb-3 text-xs font-mono text-text-primary/80 whitespace-pre-wrap break-words max-h-80 overflow-y-auto">{parsedHarnessConfig.agents_md}</pre>
+							</details>
+						{/if}
+
+						{#if parsedHarnessConfig.mcp_servers && parsedHarnessConfig.mcp_servers.length > 0}
+							<details class="bg-bg-primary border border-border rounded-lg" open>
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">MCP servers ({parsedHarnessConfig.mcp_servers.length})</summary>
+								<div class="px-3 pb-3 space-y-2">
+									{#each parsedHarnessConfig.mcp_servers as srv}
+										<div class="p-2 bg-bg-tertiary rounded border border-border">
+											<div class="flex items-center gap-2 mb-1">
+												<span class="text-xs font-semibold text-text-primary font-mono">{srv.name || '(unnamed)'}</span>
+												<span class="badge text-[9px] bg-accent-purple/20 text-accent-purple">{srv.type || 'stdio'}</span>
+											</div>
+											{#if srv.url}
+												<p class="text-[11px] text-text-secondary font-mono break-all">{srv.url}</p>
+											{/if}
+											{#if srv.command}
+												<p class="text-[11px] text-text-secondary font-mono break-all">$ {srv.command} {(srv.args || []).join(' ')}</p>
+											{/if}
+											{#if srv.headers && Object.keys(srv.headers).length > 0}
+												<p class="text-[10px] text-text-secondary">{Object.keys(srv.headers).length} header(s)</p>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							</details>
+						{/if}
+
+						{#if parsedHarnessConfig.skills && parsedHarnessConfig.skills.length > 0}
+							<details class="bg-bg-primary border border-border rounded-lg">
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">Skills ({parsedHarnessConfig.skills.length})</summary>
+								<div class="px-3 pb-3 space-y-1">
+									{#each parsedHarnessConfig.skills as sk}
+										<div class="text-xs font-mono text-text-primary">
+											.claude/skills/<span class="text-accent-blue">{sk.name}</span>/SKILL.md
+											<span class="text-text-secondary">({sk.content?.length ?? 0} bytes)</span>
+										</div>
+									{/each}
+								</div>
+							</details>
+						{/if}
+
+						{#if parsedHarnessConfig.subagents && parsedHarnessConfig.subagents.length > 0}
+							<details class="bg-bg-primary border border-border rounded-lg">
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">Subagents ({parsedHarnessConfig.subagents.length})</summary>
+								<div class="px-3 pb-3 space-y-1">
+									{#each parsedHarnessConfig.subagents as sa}
+										<div class="text-xs font-mono text-text-primary">
+											.claude/agents/<span class="text-accent-blue">{sa.name}</span>.md
+											<span class="text-text-secondary">({sa.content?.length ?? 0} bytes)</span>
+										</div>
+									{/each}
+								</div>
+							</details>
+						{/if}
+
+						{#if parsedHarnessConfig.env && Object.keys(parsedHarnessConfig.env).length > 0}
+							<details class="bg-bg-primary border border-border rounded-lg">
+								<summary class="px-3 py-2 text-xs text-text-secondary cursor-pointer hover:text-text-primary">Env ({Object.keys(parsedHarnessConfig.env).length})</summary>
+								<div class="px-3 pb-3 space-y-0.5">
+									{#each Object.entries(parsedHarnessConfig.env) as [k, v]}
+										<div class="text-xs font-mono">
+											<span class="text-accent-yellow">{k}</span><span class="text-text-secondary">=</span><span class="text-text-primary">{v}</span>
+										</div>
+									{/each}
+								</div>
+							</details>
+						{/if}
+					{/if}
+				{:else if !agent.harness_name && !agent.local_command && !agent.k8s_image}
+					<p class="text-xs text-text-secondary italic">No harness configured. This agent cannot receive reactive runs.</p>
+				{/if}
+
+				<div class="pt-2 text-[11px] text-text-secondary border-t border-border">
+					<p class="mb-1">Edit via admin CLI:</p>
+					<code class="font-mono text-text-primary bg-bg-primary px-2 py-1 rounded inline-block">synapbus harness config edit --agent {agentName}</code>
+				</div>
+			</div>
+		</div>
+
 		<!-- Trust Scores -->
 		<div class="card mb-5">
 			<div class="px-5 py-3 border-b border-border">
