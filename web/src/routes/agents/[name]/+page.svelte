@@ -327,6 +327,51 @@
 						<pre class="text-xs bg-bg-primary p-3 rounded-lg border border-border overflow-x-auto font-mono text-text-primary/80">{JSON.stringify(agent.capabilities, null, 2)}</pre>
 					</div>
 				{/if}
+
+				{#if agent.config_hash}
+					<!-- Trust & spawn lineage (feature 018) -->
+					<div class="pt-3 border-t border-border">
+						<p class="text-xs text-text-secondary mb-2 uppercase tracking-wide">Trust &amp; Spawn</p>
+						<div class="grid grid-cols-2 gap-3 text-xs">
+							<div>
+								<p class="text-text-secondary mb-0.5">config_hash</p>
+								<p class="font-mono text-text-primary break-all" title={agent.config_hash}>{agent.config_hash.slice(0, 16)}…</p>
+							</div>
+							<div>
+								<p class="text-text-secondary mb-0.5">Autonomy tier</p>
+								<p class="text-text-primary">{agent.autonomy_tier || '—'}</p>
+							</div>
+							<div>
+								<p class="text-text-secondary mb-0.5">Spawn depth</p>
+								<p class="text-text-primary">{agent.spawn_depth ?? 0}</p>
+							</div>
+							<div>
+								<p class="text-text-secondary mb-0.5">Parent agent</p>
+								<p class="text-text-primary">{agent.parent_agent_id ? `#${agent.parent_agent_id}` : 'root'}</p>
+							</div>
+						</div>
+						{#if agent.tool_scope_json && agent.tool_scope_json !== '[]'}
+							<div class="mt-3">
+								<p class="text-xs text-text-secondary mb-1">Tool scope</p>
+								<div class="flex flex-wrap gap-1">
+									{#each JSON.parse(agent.tool_scope_json) as tool}
+										<span class="px-2 py-0.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary/90">{tool}</span>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				{#if agent.system_prompt}
+					<div class="pt-3 border-t border-border">
+						<div class="flex items-center justify-between mb-1">
+							<p class="text-xs text-text-secondary uppercase tracking-wide">System Prompt</p>
+							<span class="text-[10px] text-text-secondary">{agent.system_prompt.length} chars</span>
+						</div>
+						<pre class="text-xs bg-bg-primary p-3 rounded-lg border border-border font-mono text-text-primary/90 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">{agent.system_prompt}</pre>
+					</div>
+				{/if}
 			</div>
 
 			<!-- Actions -->

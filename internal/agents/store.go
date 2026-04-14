@@ -193,7 +193,8 @@ func (s *SQLiteAgentStore) ListReactiveAgents(ctx context.Context) ([]*Agent, er
 func agentSelectSQL() string {
 	return `SELECT id, name, display_name, type, capabilities, owner_id, api_key_hash, status, created_at, updated_at,
 		 trigger_mode, cooldown_seconds, daily_trigger_budget, max_trigger_depth, k8s_image, k8s_env_json, k8s_resource_preset, pending_work,
-		 harness_name, local_command, harness_config_json
+		 harness_name, local_command, harness_config_json,
+		 config_hash, parent_agent_id, spawn_depth, system_prompt, autonomy_tier, tool_scope_json, quarantined_at, quarantine_reason
 		 FROM agents`
 }
 
@@ -301,6 +302,9 @@ func (s *SQLiteAgentStore) scanAgent(row *sql.Row) (*Agent, error) {
 	var k8sImage, k8sEnvJSON sql.NullString
 	var harnessName, localCommand, harnessConfigJSON sql.NullString
 	var pendingWork int
+	var parentAgentID sql.NullInt64
+	var quarantinedAt sql.NullTime
+	var quarantineReason sql.NullString
 	err := row.Scan(
 		&agent.ID, &agent.Name, &agent.DisplayName, &agent.Type,
 		&caps, &agent.OwnerID, &agent.APIKeyHash, &agent.Status,
@@ -309,6 +313,8 @@ func (s *SQLiteAgentStore) scanAgent(row *sql.Row) (*Agent, error) {
 		&agent.MaxTriggerDepth, &k8sImage, &k8sEnvJSON,
 		&agent.K8sResourcePreset, &pendingWork,
 		&harnessName, &localCommand, &harnessConfigJSON,
+		&agent.ConfigHash, &parentAgentID, &agent.SpawnDepth, &agent.SystemPrompt,
+		&agent.AutonomyTier, &agent.ToolScopeJSON, &quarantinedAt, &quarantineReason,
 	)
 	if err != nil {
 		return nil, err
@@ -320,6 +326,15 @@ func (s *SQLiteAgentStore) scanAgent(row *sql.Row) (*Agent, error) {
 	agent.HarnessName = harnessName.String
 	agent.LocalCommand = localCommand.String
 	agent.HarnessConfigJSON = harnessConfigJSON.String
+	if parentAgentID.Valid {
+		id := parentAgentID.Int64
+		agent.ParentAgentID = &id
+	}
+	if quarantinedAt.Valid {
+		t := quarantinedAt.Time
+		agent.QuarantinedAt = &t
+	}
+	agent.QuarantineReason = quarantineReason.String
 	return &agent, nil
 }
 
@@ -331,6 +346,9 @@ func (s *SQLiteAgentStore) scanAgents(rows *sql.Rows) ([]*Agent, error) {
 		var k8sImage, k8sEnvJSON sql.NullString
 		var harnessName, localCommand, harnessConfigJSON sql.NullString
 		var pendingWork int
+		var parentAgentID sql.NullInt64
+		var quarantinedAt sql.NullTime
+		var quarantineReason sql.NullString
 		err := rows.Scan(
 			&agent.ID, &agent.Name, &agent.DisplayName, &agent.Type,
 			&caps, &agent.OwnerID, &agent.APIKeyHash, &agent.Status,
@@ -339,6 +357,8 @@ func (s *SQLiteAgentStore) scanAgents(rows *sql.Rows) ([]*Agent, error) {
 			&agent.MaxTriggerDepth, &k8sImage, &k8sEnvJSON,
 			&agent.K8sResourcePreset, &pendingWork,
 			&harnessName, &localCommand, &harnessConfigJSON,
+			&agent.ConfigHash, &parentAgentID, &agent.SpawnDepth, &agent.SystemPrompt,
+			&agent.AutonomyTier, &agent.ToolScopeJSON, &quarantinedAt, &quarantineReason,
 		)
 		if err != nil {
 			return nil, err
@@ -350,6 +370,15 @@ func (s *SQLiteAgentStore) scanAgents(rows *sql.Rows) ([]*Agent, error) {
 		agent.HarnessName = harnessName.String
 		agent.LocalCommand = localCommand.String
 		agent.HarnessConfigJSON = harnessConfigJSON.String
+		if parentAgentID.Valid {
+			id := parentAgentID.Int64
+			agent.ParentAgentID = &id
+		}
+		if quarantinedAt.Valid {
+			t := quarantinedAt.Time
+			agent.QuarantinedAt = &t
+		}
+		agent.QuarantineReason = quarantineReason.String
 		agents = append(agents, &agent)
 	}
 	if agents == nil {

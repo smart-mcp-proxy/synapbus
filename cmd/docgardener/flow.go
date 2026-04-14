@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -289,61 +290,9 @@ func (f *flow) run(ctx context.Context) (int64, error) {
 		if !ok {
 			continue
 		}
-		// Claim atomically.
-		if err := f.tasks.Claim(ctx, t.ID, agentID, nil); err != nil {
-			return 0, fmt.Errorf("claim task %d by %s: %w", t.ID, role, err)
-		}
-		// Move through the state machine.
-		if err := f.tasks.Transition(ctx, t.ID, goaltasks.StatusInProgress, goaltasks.Extras{}); err != nil {
+		if err := f.executeSpecialistTask(ctx, g.ID, g.ChannelID, t, role, agentID); err != nil {
 			return 0, err
 		}
-		// Simulate the agent doing work: post an artifact, burn some tokens.
-		tokensUsed := int64(1500 + 500*(t.ID%3))
-		costCents := int64(25 + 10*(t.ID%3))
-		if err := f.tasks.AddSpend(ctx, t.ID, tokensUsed, costCents); err != nil {
-			return 0, err
-		}
-		// Artifact message posted to the goal channel.
-		artifactMsgID, err := f.postArtifact(ctx, g.ChannelID, role, t)
-		if err != nil {
-			return 0, err
-		}
-		if err := f.tasks.Transition(ctx, t.ID, goaltasks.StatusAwaitingVerification, goaltasks.Extras{
-			CompletionMessageID: &artifactMsgID,
-		}); err != nil {
-			return 0, err
-		}
-		// Verification: auto-approve for the scan + verify tasks; command-style
-		// verification (success) for the drift reporter.
-		verdict := goaltasks.StatusDone
-		scoreDelta := 0.15
-		evidenceRef := fmt.Sprintf("task:%d verified=auto", t.ID)
-		if role == "drift-reporter" {
-			// Simulate a command verifier — assume exit 0.
-			scoreDelta = 0.2
-			evidenceRef = fmt.Sprintf("task:%d verified=command(exit=0)", t.ID)
-		}
-		if err := f.tasks.Transition(ctx, t.ID, verdict, goaltasks.Extras{}); err != nil {
-			return 0, err
-		}
-		// Append reputation evidence for the assignee.
-		var hash string
-		if err := f.db.QueryRowContext(ctx, `SELECT config_hash FROM agents WHERE id=?`, agentID).Scan(&hash); err != nil {
-			return 0, err
-		}
-		if _, err := f.ledger.Append(ctx, trust.Evidence{
-			ConfigHash:  hash,
-			OwnerUserID: f.ownerUserID,
-			TaskDomain:  "default",
-			ScoreDelta:  scoreDelta,
-			EvidenceRef: evidenceRef,
-			Weight:      1.0,
-		}); err != nil {
-			return 0, err
-		}
-		f.postSystemMessage(ctx, g.ChannelID,
-			fmt.Sprintf("Task %d %q completed by %s (tokens=%d, cost=$%.2f, Δrep=%+.2f).",
-				t.ID, t.Title, role, tokensUsed, float64(costCents)/100, scoreDelta))
 	}
 
 	// Roll the root task up, finalize the goal.
@@ -359,6 +308,232 @@ func (f *flow) run(ctx context.Context) (int64, error) {
 	}
 	f.postSystemMessage(ctx, g.ChannelID, "Goal marked completed.")
 	return g.ID, nil
+}
+
+// executeSpecialistTask claims the task, launches a real subprocess (a
+// short shell command producing a structured artifact), writes real
+// reactive_runs + harness_runs rows with task_id populated, walks the
+// task through the state machine, and appends reputation evidence.
+// This is what the Agent Runs page reads from.
+func (f *flow) executeSpecialistTask(ctx context.Context, goalID, channelID int64, t *goaltasks.Task, role string, agentID int64) error {
+	// 1. Atomically claim the task.
+	if err := f.tasks.Claim(ctx, t.ID, agentID, nil); err != nil {
+		return fmt.Errorf("claim task %d by %s: %w", t.ID, role, err)
+	}
+	if err := f.tasks.Transition(ctx, t.ID, goaltasks.StatusInProgress, goaltasks.Extras{}); err != nil {
+		return err
+	}
+
+	// 2. Insert a reactive_runs row (status=running).
+	agentName := ""
+	_ = f.db.QueryRowContext(ctx, `SELECT name FROM agents WHERE id=?`, agentID).Scan(&agentName)
+	runStart := time.Now().UTC()
+	rrRes, err := f.db.ExecContext(ctx, `
+		INSERT INTO reactive_runs
+			(agent_name, trigger_event, trigger_depth, trigger_from, status, started_at, created_at)
+		VALUES (?, 'task.claim', 1, 'doc-gardener-coordinator', 'running', ?, ?)`,
+		agentName, runStart, runStart)
+	if err != nil {
+		return fmt.Errorf("insert reactive_run: %w", err)
+	}
+	reactiveRunID, _ := rrRes.LastInsertId()
+
+	// 3. Insert a harness_runs row (status=running) with task_id populated.
+	runUUID := newRunID()
+	hrRes, err := f.db.ExecContext(ctx, `
+		INSERT INTO harness_runs
+			(run_id, agent_name, backend, message_id, reactive_run_id, task_id, status, created_at,
+			 trace_id, span_id, session_id, tokens_in, tokens_out, tokens_cached, cost_usd)
+		VALUES (?, ?, 'subprocess', NULL, ?, ?, 'running', ?, ?, ?, '', 0, 0, 0, 0)`,
+		runUUID, agentName, reactiveRunID, t.ID, runStart, newHex(16), newHex(8))
+	if err != nil {
+		return fmt.Errorf("insert harness_run: %w", err)
+	}
+	harnessRunID, _ := hrRes.LastInsertId()
+
+	// 4. Real subprocess — emit the structured artifact via bash.
+	cmdText := buildSpecialistCommand(role, t)
+	prompt := buildSpecialistPrompt(role, t)
+	execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(execCtx, "bash", "-lc", cmdText)
+	cmd.Env = append(cmd.Env,
+		"SYNAPBUS_TASK_ID="+fmt.Sprint(t.ID),
+		"SYNAPBUS_AGENT="+agentName,
+		"SYNAPBUS_ROLE="+role,
+		"PATH=/usr/bin:/bin:/usr/local/bin",
+	)
+	stdout, runErr := cmd.CombinedOutput()
+	duration := time.Since(runStart)
+	exitCode := 0
+	status := "success"
+	if runErr != nil {
+		if ee, ok := runErr.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = -1
+		}
+		status = "failed"
+	}
+
+	// Simulated token/cost accounting. Real LLM integration would populate
+	// these from the provider's usage response.
+	tokensIn := int64(800 + 200*(t.ID%3))
+	tokensOut := int64(400 + 100*(t.ID%3))
+	costCents := int64(25 + 10*(t.ID%3))
+	costUSD := float64(costCents) / 100
+
+	// 5. Post the real subprocess stdout as the artifact message.
+	artifactMsgID, err := f.postRealArtifact(ctx, channelID, role, t, string(stdout))
+	if err != nil {
+		return err
+	}
+
+	// 6. Finalize harness_runs row with captured prompt/response.
+	durationMs := duration.Milliseconds()
+	finishedAt := time.Now().UTC()
+	if _, err := f.db.ExecContext(ctx, `
+		UPDATE harness_runs
+		   SET status       = ?,
+		       exit_code    = ?,
+		       tokens_in    = ?,
+		       tokens_out   = ?,
+		       cost_usd     = ?,
+		       duration_ms  = ?,
+		       prompt       = ?,
+		       response     = ?,
+		       finished_at  = ?
+		 WHERE id = ?`,
+		status, exitCode, tokensIn, tokensOut, costUSD, durationMs,
+		prompt, string(stdout), finishedAt, harnessRunID); err != nil {
+		return fmt.Errorf("finalize harness_run: %w", err)
+	}
+
+	// 7. Finalize reactive_runs row.
+	rrStatus := "completed"
+	if status == "failed" {
+		rrStatus = "failed"
+	}
+	if _, err := f.db.ExecContext(ctx, `
+		UPDATE reactive_runs
+		   SET status       = ?,
+		       completed_at = ?,
+		       duration_ms  = ?
+		 WHERE id = ?`,
+		rrStatus, finishedAt, durationMs, reactiveRunID); err != nil {
+		return fmt.Errorf("finalize reactive_run: %w", err)
+	}
+
+	// 8. Increment leaf task spend.
+	if err := f.tasks.AddSpend(ctx, t.ID, tokensIn+tokensOut, costCents); err != nil {
+		return err
+	}
+
+	// 9. Transition task: in_progress → awaiting_verification → done | failed.
+	if err := f.tasks.Transition(ctx, t.ID, goaltasks.StatusAwaitingVerification, goaltasks.Extras{
+		CompletionMessageID: &artifactMsgID,
+	}); err != nil {
+		return err
+	}
+	verdict := goaltasks.StatusDone
+	scoreDelta := 0.15
+	evidenceRef := fmt.Sprintf("task:%d verified=auto harness_run:%d", t.ID, harnessRunID)
+	if status == "failed" {
+		verdict = goaltasks.StatusFailed
+		scoreDelta = -0.2
+		evidenceRef = fmt.Sprintf("task:%d subprocess_exit=%d", t.ID, exitCode)
+	} else if role == "drift-reporter" {
+		scoreDelta = 0.2
+		evidenceRef = fmt.Sprintf("task:%d verified=command(exit=0) harness_run:%d", t.ID, harnessRunID)
+	}
+	extras := goaltasks.Extras{}
+	if verdict == goaltasks.StatusFailed {
+		extras.FailureReason = fmt.Sprintf("subprocess exit %d", exitCode)
+	}
+	if err := f.tasks.Transition(ctx, t.ID, verdict, extras); err != nil {
+		return err
+	}
+
+	// 10. Append reputation evidence keyed by config_hash.
+	var hash string
+	if err := f.db.QueryRowContext(ctx, `SELECT config_hash FROM agents WHERE id=?`, agentID).Scan(&hash); err != nil {
+		return err
+	}
+	if _, err := f.ledger.Append(ctx, trust.Evidence{
+		ConfigHash:  hash,
+		OwnerUserID: f.ownerUserID,
+		TaskDomain:  "default",
+		ScoreDelta:  scoreDelta,
+		EvidenceRef: evidenceRef,
+		Weight:      1.0,
+	}); err != nil {
+		return err
+	}
+
+	// 11. Post a system summary message.
+	f.postSystemMessage(ctx, channelID,
+		fmt.Sprintf("Task %d %q %s by %s — tokens_in=%d tokens_out=%d cost=$%.2f duration=%dms Δrep=%+.2f (harness_run #%d).",
+			t.ID, t.Title, verdict, role, tokensIn, tokensOut, costUSD, durationMs, scoreDelta, harnessRunID))
+	f.logger.Info("specialist task executed",
+		"task_id", t.ID, "role", role, "status", verdict,
+		"duration_ms", durationMs, "harness_run_id", harnessRunID)
+	return nil
+}
+
+// buildSpecialistCommand returns a real shell command that produces the
+// structured artifact text for a given specialist role + task.
+func buildSpecialistCommand(role string, t *goaltasks.Task) string {
+	switch role {
+	case "docs-scanner":
+		return `cat <<EOF
+#finding task=` + fmt.Sprint(t.ID) + `
+source=docs.mcpproxy.app
+flags_found=12
+flags=--port --config --socket --data-dir --log-format --log-level --otel-endpoint --tls-cert --tls-key --metrics-port --retention --version
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF`
+	case "cli-verifier":
+		return `cat <<EOF
+#verified task=` + fmt.Sprint(t.ID) + `
+source=mcpproxy --help
+matched=10
+missing=--otel-endpoint --retention
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF`
+	case "drift-reporter":
+		return `cat <<EOF
+#summary task=` + fmt.Sprint(t.ID) + `
+docs_flags=12
+matched=10
+drifted=2
+drifted_list=--otel-endpoint --retention
+recommendation=Patch docs.mcpproxy.app/reference/cli to remove --otel-endpoint and --retention, or implement the flags in mcpproxy if they are planned.
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF`
+	}
+	return "echo 'no-op'"
+}
+
+// buildSpecialistPrompt returns the "prompt" text we record on the
+// harness_runs row — the instruction the simulated specialist would
+// have received in a real LLM-driven run.
+func buildSpecialistPrompt(role string, t *goaltasks.Task) string {
+	return fmt.Sprintf(`task_id: %d
+title: %s
+role: %s
+acceptance_criteria: %s
+instruction: perform the role's duty and emit a structured %q artifact to the goal channel.
+`, t.ID, t.Title, role, t.AcceptanceCriteria, role)
+}
+
+func newRunID() string {
+	return "run_" + newHex(16)
+}
+
+func newHex(nBytes int) string {
+	buf := make([]byte, nBytes)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
 }
 
 // --- helpers ----------------------------------------------------------
@@ -486,6 +661,24 @@ func (f *flow) postSystemMessage(ctx context.Context, channelID int64, body stri
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+// postRealArtifact writes the captured subprocess stdout as an
+// artifact message tagged with metadata.kind="artifact".
+func (f *flow) postRealArtifact(ctx context.Context, channelID int64, role string, t *goaltasks.Task, body string) (int64, error) {
+	if body == "" {
+		body = fmt.Sprintf("(empty artifact from %s for task %d)", role, t.ID)
+	}
+	now := time.Now().UTC()
+	res, err := f.db.ExecContext(ctx, `
+		INSERT INTO messages (conversation_id, from_agent, to_agent, channel_id, body, priority, status, metadata, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, ?, 5, 'done', '{"kind":"artifact"}', ?, ?)`,
+		f.conversationID, role, channelID, body, now, now)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
 }
 
 func (f *flow) postArtifact(ctx context.Context, channelID int64, role string, t *goaltasks.Task) (int64, error) {
