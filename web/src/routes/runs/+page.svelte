@@ -197,11 +197,14 @@
 									<pre>{run.error_log}</pre>
 								</div>
 							{/if}
-							{#if run.status === 'failed'}
-								<button class="retry-btn" onclick={() => retryRun(run.id)}>
-									Retry
-								</button>
-							{/if}
+							<div class="detail-actions">
+								<a href="/runs/{run.id}" class="detail-link">View full details →</a>
+								{#if run.status === 'failed'}
+									<button class="retry-btn" onclick={() => retryRun(run.id)}>
+										Retry
+									</button>
+								{/if}
+							</div>
 						</div>
 					{/if}
 				</div>
@@ -450,5 +453,12 @@
 
 	.retry-btn:hover {
 		opacity: 0.9;
+	}
+
+	.detail-actions {
+		margin-top: 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 	}
 </style>

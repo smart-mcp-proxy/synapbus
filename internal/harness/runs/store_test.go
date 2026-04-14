@@ -25,25 +25,28 @@ func setupDB(t *testing.T) *sql.DB {
 	}
 	schema := `
 CREATE TABLE harness_runs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id        TEXT NOT NULL UNIQUE,
-    agent_name    TEXT NOT NULL,
-    backend       TEXT NOT NULL,
-    message_id    INTEGER,
-    status        TEXT NOT NULL,
-    exit_code     INTEGER,
-    trace_id      TEXT,
-    span_id       TEXT,
-    session_id    TEXT,
-    tokens_in     INTEGER NOT NULL DEFAULT 0,
-    tokens_out    INTEGER NOT NULL DEFAULT 0,
-    tokens_cached INTEGER NOT NULL DEFAULT 0,
-    cost_usd      REAL NOT NULL DEFAULT 0,
-    duration_ms   INTEGER,
-    result_json   TEXT,
-    logs_excerpt  TEXT,
-    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    finished_at   DATETIME
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT NOT NULL UNIQUE,
+    agent_name      TEXT NOT NULL,
+    backend         TEXT NOT NULL,
+    message_id      INTEGER,
+    reactive_run_id INTEGER,
+    status          TEXT NOT NULL,
+    exit_code       INTEGER,
+    trace_id        TEXT,
+    span_id         TEXT,
+    session_id      TEXT,
+    tokens_in       INTEGER NOT NULL DEFAULT 0,
+    tokens_out      INTEGER NOT NULL DEFAULT 0,
+    tokens_cached   INTEGER NOT NULL DEFAULT 0,
+    cost_usd        REAL NOT NULL DEFAULT 0,
+    duration_ms     INTEGER,
+    result_json     TEXT,
+    logs_excerpt    TEXT,
+    prompt          TEXT,
+    response        TEXT,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at     DATETIME
 );`
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatalf("schema: %v", err)

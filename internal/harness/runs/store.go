@@ -16,27 +16,32 @@ import (
 	"github.com/synapbus/synapbus/internal/observability"
 )
 
-// Run is one row of the harness_runs table.
+// Run is one row of the harness_runs table. JSON tags match the
+// snake_case convention used everywhere else in the Web UI TypeScript
+// layer; fields map 1:1 to column names.
 type Run struct {
-	ID           int64
-	RunID        string
-	AgentName    string
-	Backend      string
-	MessageID    *int64
-	Status       string
-	ExitCode     *int
-	TraceID      string
-	SpanID       string
-	SessionID    string
-	TokensIn     int64
-	TokensOut    int64
-	TokensCached int64
-	CostUSD      float64
-	DurationMs   *int64
-	ResultJSON   string
-	LogsExcerpt  string
-	CreatedAt    time.Time
-	FinishedAt   *time.Time
+	ID            int64      `json:"id"`
+	RunID         string     `json:"run_id"`
+	AgentName     string     `json:"agent_name"`
+	Backend       string     `json:"backend"`
+	MessageID     *int64     `json:"message_id,omitempty"`
+	ReactiveRunID *int64     `json:"reactive_run_id,omitempty"`
+	Status        string     `json:"status"`
+	ExitCode      *int       `json:"exit_code,omitempty"`
+	TraceID       string     `json:"trace_id,omitempty"`
+	SpanID        string     `json:"span_id,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
+	TokensIn      int64      `json:"tokens_in"`
+	TokensOut     int64      `json:"tokens_out"`
+	TokensCached  int64      `json:"tokens_cached"`
+	CostUSD       float64    `json:"cost_usd"`
+	DurationMs    *int64     `json:"duration_ms,omitempty"`
+	ResultJSON    string     `json:"result_json,omitempty"`
+	LogsExcerpt   string     `json:"logs_excerpt,omitempty"`
+	Prompt        string     `json:"prompt,omitempty"`
+	Response      string     `json:"response,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
 }
 
 // Status constants match the harness_runs.status column domain.
@@ -87,14 +92,20 @@ func (s *Store) OnStart(ctx context.Context, agent *agents.Agent, harnessName st
 		id := req.Message.ID
 		msgID = &id
 	}
+	var reactiveRunID *int64
+	if req.ReactiveRunID > 0 {
+		id := req.ReactiveRunID
+		reactiveRunID = &id
+	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO harness_runs (run_id, agent_name, backend, message_id, status, trace_id, session_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		`INSERT INTO harness_runs (run_id, agent_name, backend, message_id, reactive_run_id, status, trace_id, session_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		req.RunID,
 		agentNameOf(agent),
 		harnessName,
 		msgID,
+		reactiveRunID,
 		StatusRunning,
 		observability.TraceIDFromContext(ctx),
 		req.SessionID,
@@ -125,6 +136,7 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 	var exitCode *int
 	logsExcerpt := ""
 	var resultJSON string
+	var promptText, responseText string
 	var tokensIn, tokensOut, tokensCached int64
 	var costUSD float64
 	sessionID := req.SessionID
@@ -136,6 +148,8 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 		if len(res.ResultJSON) > 0 {
 			resultJSON = string(res.ResultJSON)
 		}
+		promptText = res.Prompt
+		responseText = res.Response
 		tokensIn = res.Usage.TokensIn
 		tokensOut = res.Usage.TokensOut
 		tokensCached = res.Usage.TokensCached
@@ -150,10 +164,20 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 	if execErr != nil {
 		status = StatusFailed
 	}
-	// Cap logs excerpt to keep row sizes sane (matches design: bounded).
-	const logsCap = 16 * 1024
+	// Cap each large text field so harness_runs rows stay reasonable.
+	const (
+		logsCap     = 16 * 1024
+		promptCap   = 32 * 1024
+		responseCap = 32 * 1024
+	)
 	if len(logsExcerpt) > logsCap {
 		logsExcerpt = "... [truncated] ...\n" + logsExcerpt[len(logsExcerpt)-logsCap:]
+	}
+	if len(promptText) > promptCap {
+		promptText = "... [truncated " + fmt.Sprintf("%d", len(promptText)-promptCap) + " bytes] ...\n" + promptText[len(promptText)-promptCap:]
+	}
+	if len(responseText) > responseCap {
+		responseText = "... [truncated " + fmt.Sprintf("%d", len(responseText)-responseCap) + " bytes] ...\n" + responseText[len(responseText)-responseCap:]
 	}
 
 	traceID := ""
@@ -170,6 +194,7 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 		status = ?, exit_code = ?, trace_id = ?, session_id = ?,
 		tokens_in = ?, tokens_out = ?, tokens_cached = ?, cost_usd = ?,
 		duration_ms = ?, result_json = ?, logs_excerpt = ?,
+		prompt = ?, response = ?,
 		finished_at = CURRENT_TIMESTAMP
 		WHERE run_id = ?`
 
@@ -177,19 +202,26 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 		status, exitCode, traceID, sessionID,
 		tokensIn, tokensOut, tokensCached, costUSD,
 		durationMs, nullableString(resultJSON), nullableString(logsExcerpt),
+		nullableString(promptText), nullableString(responseText),
 		req.RunID,
 	)
 	if err == nil {
 		if n, _ := result.RowsAffected(); n == 0 {
 			// Row didn't exist — insert it fresh.
+			var reactiveRunID *int64
+			if req.ReactiveRunID > 0 {
+				id := req.ReactiveRunID
+				reactiveRunID = &id
+			}
 			_, err = s.db.ExecContext(ctx,
-				`INSERT INTO harness_runs (run_id, agent_name, backend, status, exit_code, trace_id, session_id,
-					tokens_in, tokens_out, tokens_cached, cost_usd, duration_ms, result_json, logs_excerpt, created_at, finished_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-				req.RunID, agentNameOf(agent), harnessName,
+				`INSERT INTO harness_runs (run_id, agent_name, backend, reactive_run_id, status, exit_code, trace_id, session_id,
+					tokens_in, tokens_out, tokens_cached, cost_usd, duration_ms, result_json, logs_excerpt, prompt, response, created_at, finished_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+				req.RunID, agentNameOf(agent), harnessName, reactiveRunID,
 				status, exitCode, traceID, sessionID,
 				tokensIn, tokensOut, tokensCached, costUSD,
 				durationMs, nullableString(resultJSON), nullableString(logsExcerpt),
+				nullableString(promptText), nullableString(responseText),
 			)
 		}
 	}
@@ -204,6 +236,21 @@ func (s *Store) OnFinish(ctx context.Context, agent *agents.Agent, harnessName s
 func (s *Store) GetByRunID(ctx context.Context, runID string) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, selectSQL()+` WHERE run_id = ?`, runID)
 	return scanRun(row)
+}
+
+// GetByReactiveRunID returns the most recent harness_run linked to a
+// reactive_run. Used by the Web UI to JOIN the two tables without
+// leaking SQL into the API layer. Returns nil, nil when no row exists.
+func (s *Store) GetByReactiveRunID(ctx context.Context, reactiveRunID int64) (*Run, error) {
+	row := s.db.QueryRowContext(ctx,
+		selectSQL()+` WHERE reactive_run_id = ? ORDER BY id DESC LIMIT 1`,
+		reactiveRunID,
+	)
+	run, err := scanRun(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return run, err
 }
 
 // ListByAgent returns recent runs for an agent, newest first.
@@ -239,29 +286,33 @@ func nullableString(s string) any {
 }
 
 func selectSQL() string {
-	return `SELECT id, run_id, agent_name, backend, message_id, status, exit_code,
+	return `SELECT id, run_id, agent_name, backend, message_id, reactive_run_id, status, exit_code,
 		trace_id, span_id, session_id, tokens_in, tokens_out, tokens_cached, cost_usd,
-		duration_ms, result_json, logs_excerpt, created_at, finished_at
+		duration_ms, result_json, logs_excerpt, prompt, response, created_at, finished_at
 		FROM harness_runs`
 }
 
 func scanRun(row *sql.Row) (*Run, error) {
 	var r Run
-	var msgID sql.NullInt64
+	var msgID, reactiveRunID sql.NullInt64
 	var exitCode sql.NullInt64
-	var traceID, spanID, sessionID, resultJSON, logsExcerpt sql.NullString
+	var traceID, spanID, sessionID, resultJSON, logsExcerpt, prompt, response sql.NullString
 	var durationMs sql.NullInt64
 	var createdAt, finishedAt sql.NullTime
 	if err := row.Scan(
-		&r.ID, &r.RunID, &r.AgentName, &r.Backend, &msgID, &r.Status, &exitCode,
+		&r.ID, &r.RunID, &r.AgentName, &r.Backend, &msgID, &reactiveRunID, &r.Status, &exitCode,
 		&traceID, &spanID, &sessionID, &r.TokensIn, &r.TokensOut, &r.TokensCached, &r.CostUSD,
-		&durationMs, &resultJSON, &logsExcerpt, &createdAt, &finishedAt,
+		&durationMs, &resultJSON, &logsExcerpt, &prompt, &response, &createdAt, &finishedAt,
 	); err != nil {
 		return nil, err
 	}
 	if msgID.Valid {
 		v := msgID.Int64
 		r.MessageID = &v
+	}
+	if reactiveRunID.Valid {
+		v := reactiveRunID.Int64
+		r.ReactiveRunID = &v
 	}
 	if exitCode.Valid {
 		v := int(exitCode.Int64)
@@ -272,6 +323,8 @@ func scanRun(row *sql.Row) (*Run, error) {
 	r.SessionID = sessionID.String
 	r.ResultJSON = resultJSON.String
 	r.LogsExcerpt = logsExcerpt.String
+	r.Prompt = prompt.String
+	r.Response = response.String
 	if durationMs.Valid {
 		v := durationMs.Int64
 		r.DurationMs = &v
@@ -290,21 +343,25 @@ func scanRuns(rows *sql.Rows) ([]*Run, error) {
 	var out []*Run
 	for rows.Next() {
 		var r Run
-		var msgID sql.NullInt64
+		var msgID, reactiveRunID sql.NullInt64
 		var exitCode sql.NullInt64
-		var traceID, spanID, sessionID, resultJSON, logsExcerpt sql.NullString
+		var traceID, spanID, sessionID, resultJSON, logsExcerpt, prompt, response sql.NullString
 		var durationMs sql.NullInt64
 		var createdAt, finishedAt sql.NullTime
 		if err := rows.Scan(
-			&r.ID, &r.RunID, &r.AgentName, &r.Backend, &msgID, &r.Status, &exitCode,
+			&r.ID, &r.RunID, &r.AgentName, &r.Backend, &msgID, &reactiveRunID, &r.Status, &exitCode,
 			&traceID, &spanID, &sessionID, &r.TokensIn, &r.TokensOut, &r.TokensCached, &r.CostUSD,
-			&durationMs, &resultJSON, &logsExcerpt, &createdAt, &finishedAt,
+			&durationMs, &resultJSON, &logsExcerpt, &prompt, &response, &createdAt, &finishedAt,
 		); err != nil {
 			return nil, err
 		}
 		if msgID.Valid {
 			v := msgID.Int64
 			r.MessageID = &v
+		}
+		if reactiveRunID.Valid {
+			v := reactiveRunID.Int64
+			r.ReactiveRunID = &v
 		}
 		if exitCode.Valid {
 			v := int(exitCode.Int64)
@@ -315,6 +372,8 @@ func scanRuns(rows *sql.Rows) ([]*Run, error) {
 		r.SessionID = sessionID.String
 		r.ResultJSON = resultJSON.String
 		r.LogsExcerpt = logsExcerpt.String
+		r.Prompt = prompt.String
+		r.Response = response.String
 		if durationMs.Valid {
 			v := durationMs.Int64
 			r.DurationMs = &v

@@ -33,17 +33,27 @@ const (
 
 // Reactor is the reactive agent triggering engine.
 type Reactor struct {
-	store      *Store
-	agentStore agents.AgentStore
-	runner     k8spkg.JobRunner
-	registry   *harness.Registry
-	notifier   FailureNotifier
-	logger     *slog.Logger
+	store          *Store
+	agentStore     agents.AgentStore
+	runner         k8spkg.JobRunner
+	registry       *harness.Registry
+	notifier       FailureNotifier
+	reactions      ReactionNotifier
+	logger         *slog.Logger
 }
 
 // FailureNotifier sends system DMs on job failure.
 type FailureNotifier interface {
 	NotifyFailure(ctx context.Context, ownerAgentName, agentName, triggerFrom, triggerEvent string, durationMs int64, errorSummary string) error
+}
+
+// ReactionNotifier lets the reactor mark the triggering DM with a
+// workflow reaction (in_progress / done / reject) so the sender can
+// see at a glance whether their message is being processed. Errors
+// are logged, never returned — reactions are cosmetic and must not
+// block the main dispatch flow.
+type ReactionNotifier interface {
+	AddReaction(ctx context.Context, messageID int64, agentName, reactionType string) error
 }
 
 // New creates a new Reactor.
@@ -66,6 +76,29 @@ func (r *Reactor) SetFailureNotifier(n FailureNotifier) {
 // the existing JobRunner + poller path for restart-safety.
 func (r *Reactor) SetHarnessRegistry(reg *harness.Registry) {
 	r.registry = reg
+}
+
+// SetReactionNotifier wires the component that marks triggering DMs
+// with in_progress / done / reject reactions. Optional — a nil
+// notifier simply skips the reaction step.
+func (r *Reactor) SetReactionNotifier(n ReactionNotifier) {
+	r.reactions = n
+}
+
+// react is a best-effort wrapper that swallows and logs errors so the
+// dispatch flow is never blocked by a reaction-store hiccup.
+func (r *Reactor) react(ctx context.Context, messageID int64, agentName, reactionType string) {
+	if r.reactions == nil || messageID <= 0 {
+		return
+	}
+	if err := r.reactions.AddReaction(ctx, messageID, agentName, reactionType); err != nil {
+		r.logger.Debug("reaction notifier failed",
+			"message_id", messageID,
+			"agent", agentName,
+			"reaction", reactionType,
+			"error", err,
+		)
+	}
 }
 
 // Dispatch implements dispatcher.EventDispatcher. Called by MultiDispatcher
@@ -273,6 +306,10 @@ func (r *Reactor) dispatchHarness(ctx context.Context, agent *agents.Agent, even
 	metrics.ReactiveTriggersTotal.WithLabelValues(agent.Name, StatusRunning).Inc()
 	metrics.ReactiveAgentState.WithLabelValues(agent.Name).Set(1)
 
+	// Eyes-on: mark the triggering DM in_progress as the targeted
+	// agent so the sender's Web UI shows visual progress.
+	r.react(ctx, event.MessageID, agent.Name, "in_progress")
+
 	r.logger.Info("reactive harness dispatch",
 		"agent", agent.Name,
 		"backend", r.agentBackendKind(agent),
@@ -283,9 +320,10 @@ func (r *Reactor) dispatchHarness(ctx context.Context, agent *agents.Agent, even
 	)
 
 	req := &harness.ExecRequest{
-		RunID:     uuid.NewString(),
-		AgentName: agent.Name,
-		Agent:     agent,
+		RunID:         uuid.NewString(),
+		AgentName:     agent.Name,
+		Agent:         agent,
+		ReactiveRunID: runID,
 		Message: &messaging.Message{
 			ID:        event.MessageID,
 			FromAgent: event.FromAgent,
@@ -343,7 +381,11 @@ func (r *Reactor) runHarness(runID int64, agent *agents.Agent, event dispatcher.
 	todayCount, _ := r.store.CountTodayRuns(ctx, agent.Name)
 	metrics.ReactiveBudgetUsed.WithLabelValues(agent.Name).Set(float64(todayCount))
 
+	// Mark the triggering DM with the terminal reaction. Done wins
+	// over in_progress via priority (see reactions.reactionPriority),
+	// so we don't need to remove the in_progress reaction first.
 	if status == StatusFailed {
+		r.react(context.Background(), event.MessageID, agent.Name, "reject")
 		r.logger.Warn("reactive harness run failed",
 			"agent", agent.Name,
 			"run_id", runID,
@@ -351,6 +393,7 @@ func (r *Reactor) runHarness(runID int64, agent *agents.Agent, event dispatcher.
 		)
 		r.notifyFailure(context.Background(), agent, event, durationMs, errorLog)
 	} else {
+		r.react(context.Background(), event.MessageID, agent.Name, "done")
 		r.logger.Info("reactive harness run succeeded",
 			"agent", agent.Name,
 			"run_id", runID,

@@ -2,6 +2,7 @@
 	import { openThread } from '$lib/stores/thread';
 	import MessageBody from '$lib/components/MessageBody.svelte';
 	import AttachmentPreview from '$lib/components/AttachmentPreview.svelte';
+	import ReactionPills from '$lib/components/ReactionPills.svelte';
 
 	type Attachment = {
 		hash: string;
@@ -9,6 +10,12 @@
 		size: number;
 		mime_type: string;
 		is_image: boolean;
+	};
+
+	type ReactionEntry = {
+		agent_name: string;
+		reaction: string;
+		metadata?: Record<string, any>;
 	};
 
 	type Message = {
@@ -22,6 +29,7 @@
 		created_at: string;
 		reply_count?: number;
 		attachments?: Attachment[];
+		reactions?: ReactionEntry[];
 	};
 
 	let { messages = [], showConversationLink = false, agentTypes = {} }: { messages: Message[]; showConversationLink?: boolean; agentTypes?: Record<string, string> } = $props();
@@ -117,6 +125,15 @@
 							{/if}
 						</div>
 						<div class="text-sm text-text-primary/90 leading-relaxed"><MessageBody body={msg.body} truncate={800} /></div>
+
+						<!-- Reactions: rendered below the body so lifecycle pills -->
+						<!-- (in_progress / done / reject) from the reactor are -->
+						<!-- visible to the sender in real time. -->
+						{#if msg.reactions && msg.reactions.length > 0}
+							<div onclick={(e) => e.stopPropagation()} role="presentation">
+								<ReactionPills reactions={msg.reactions} messageId={msg.id} />
+							</div>
+						{/if}
 
 						<!-- Attachments -->
 						{#if msg.attachments && msg.attachments.length > 0}

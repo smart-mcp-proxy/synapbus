@@ -202,6 +202,17 @@ func (h *Harness) Execute(ctx context.Context, req *harness.ExecRequest) (*harne
 		}
 	}
 
+	// Load optional prompt.txt / response.txt that wrappers write as
+	// a post-hoc audit trail for the Web UI run detail view.
+	promptText := ""
+	if raw, readErr := os.ReadFile(filepath.Join(workdir, "prompt.txt")); readErr == nil {
+		promptText = string(raw)
+	}
+	responseText := ""
+	if raw, readErr := os.ReadFile(filepath.Join(workdir, "response.txt")); readErr == nil {
+		responseText = string(raw)
+	}
+
 	logs := mergeLogs(&stdout, &stderr, h.cfg.LogsCap)
 
 	// Cleanup policy: remove workdir on success unless configured to
@@ -222,6 +233,8 @@ func (h *Harness) Execute(ctx context.Context, req *harness.ExecRequest) (*harne
 		ExitCode:   exitCode,
 		Logs:       logs,
 		ResultJSON: resultJSON,
+		Prompt:     promptText,
+		Response:   responseText,
 	}
 
 	// Distinguish context timeout from plain failures so the caller

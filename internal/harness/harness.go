@@ -96,6 +96,12 @@ type ExecRequest struct {
 	// asks the backend to resume a prior conversation.
 	SessionID string
 
+	// ReactiveRunID, when > 0, is the id of the reactive_runs row
+	// that triggered this dispatch. Stored alongside the harness_runs
+	// row so the Web UI can JOIN reactive_runs ↔ harness_runs and
+	// show operators which subprocess run produced which agent reply.
+	ReactiveRunID int64
+
 	// Budget bounds wall-clock, tokens, and cost.
 	Budget Budget
 
@@ -124,6 +130,18 @@ type ExecResult struct {
 	// write it to stdout or a shared volume; webhook agents return it
 	// in the response body.
 	ResultJSON json.RawMessage
+
+	// Prompt is the rendered prompt the child actually received —
+	// system instructions + user message + whatever context the
+	// backend assembled. Subprocess backends populate this by reading
+	// a `prompt.txt` the wrapper wrote into the workdir. Bounded in
+	// size by the observer when it persists.
+	Prompt string
+
+	// Response is the raw text the backend produced before any
+	// post-processing (routing decisions, JSON parsing). Subprocess
+	// backends read this from `response.txt`.
+	Response string
 
 	// Usage captures token / cost accounting when the backend can
 	// report it. Zero values mean "not reported".

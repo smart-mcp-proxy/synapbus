@@ -10,6 +10,7 @@ import (
 	"github.com/synapbus/synapbus/internal/apikeys"
 	"github.com/synapbus/synapbus/internal/attachments"
 	"github.com/synapbus/synapbus/internal/channels"
+	"github.com/synapbus/synapbus/internal/harness/runs"
 	"github.com/synapbus/synapbus/internal/k8s"
 	"github.com/synapbus/synapbus/internal/messaging"
 	"github.com/synapbus/synapbus/internal/reactor"
@@ -41,6 +42,7 @@ type RouterConfig struct {
 	TrustService      *trust.Service
 	ReactorStore      *reactor.Store
 	ReactorEngine     *reactor.Reactor
+	HarnessRunsStore  *runs.Store
 	WikiService       *wiki.Service
 	SSEHub            *SSEHub
 	Broadcaster       *SSEBroadcaster
@@ -246,7 +248,14 @@ func NewRouterWithConfig(cfg RouterConfig) chi.Router {
 
 	// Reactive Runs
 	if cfg.ReactorStore != nil && cfg.ReactorEngine != nil && cfg.AgentService != nil {
-		runsHandler := NewRunsHandler(cfg.ReactorStore, cfg.ReactorEngine, agents.NewSQLiteAgentStore(cfg.DB))
+		runsHandler := NewRunsHandler(
+			cfg.ReactorStore,
+			cfg.ReactorEngine,
+			agents.NewSQLiteAgentStore(cfg.DB),
+			cfg.HarnessRunsStore,
+			cfg.MsgService,
+			cfg.DB,
+		)
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware)
 

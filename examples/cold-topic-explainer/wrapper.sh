@@ -44,8 +44,11 @@ PROMPT="$(cat GEMINI.md)
 Incoming DM from @${FROM}:
 ${BODY}"
 
-# Preserve the exact prompt and any stderr noise for forensics.
-printf '%s' "$PROMPT" > gemini.prompt.txt
+# Preserve the exact prompt the model received — the subprocess
+# harness reads prompt.txt after the run completes and stores it in
+# harness_runs.prompt so the Web UI can show "what the model saw".
+printf '%s' "$PROMPT" > prompt.txt
+
 set +e
 RAW=$(gemini -m "$GEMINI_MODEL" --approval-mode yolo -p "$PROMPT" 2>gemini.stderr.log)
 GEMINI_EXIT=$?
@@ -55,8 +58,10 @@ set -e
 # stdout when its MCP config can't reach a server. Strip it.
 RESPONSE=$(printf '%s' "$RAW" | sed 's|^MCP issues detected\. Run /mcp list for status\.||')
 
-# Save the cleaned response for forensics before we decide next steps.
-printf '%s' "$RESPONSE" > gemini.stdout.txt
+# Save both the raw and the cleaned response. `response.txt` is the
+# one the harness persists into harness_runs.response.
+printf '%s' "$RAW" > gemini.stdout.raw
+printf '%s' "$RESPONSE" > response.txt
 
 if [ -z "$RESPONSE" ]; then
     log "empty gemini response (exit=$GEMINI_EXIT); last stderr:"

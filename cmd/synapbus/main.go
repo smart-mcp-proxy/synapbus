@@ -513,6 +513,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	harnessRunsStore := runs.New(db.DB, slog.Default())
 	harnessRegistry.Observer = harnessRunsStore
 	reactorEngine.SetHarnessRegistry(harnessRegistry)
+	reactorEngine.SetReactionNotifier(&reactorReactionAdapter{svc: reactionService})
 	slog.Info("harness registry configured",
 		"backends", harnessRegistry.Names(),
 	)
@@ -713,6 +714,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		TrustService:      trustService,
 		ReactorStore:      reactorStore,
 		ReactorEngine:     reactorEngine,
+		HarnessRunsStore:  harnessRunsStore,
 		BaseURL:           baseURL,
 		WikiService:       wikiService,
 	})
@@ -951,6 +953,18 @@ func (a *attachmentLinkerAdapter) GetByMessageID(ctx context.Context, messageID 
 		}
 	}
 	return results, nil
+}
+
+// reactorReactionAdapter adapts reactions.Service to the reactor's
+// ReactionNotifier interface. It wraps Toggle so the reactor only
+// sees one simple AddReaction call.
+type reactorReactionAdapter struct {
+	svc *reactions.Service
+}
+
+func (a *reactorReactionAdapter) AddReaction(ctx context.Context, messageID int64, agentName, reactionType string) error {
+	_, err := a.svc.Toggle(ctx, messageID, agentName, reactionType, nil)
+	return err
 }
 
 // reactionEnricherAdapter adapts reactions.Service to messaging.ReactionEnricher.
