@@ -14,13 +14,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/bcrypt"
 
 	_ "modernc.org/sqlite"
 )
@@ -53,7 +56,14 @@ func main() {
 	reportCmd.Flags().Int64Var(&flagGoalID, "goal", 0, "Goal id to report on (0 = latest)")
 	reportCmd.Flags().StringVar(&flagOutputPath, "out", "./report.html", "Output HTML file path")
 
-	root.AddCommand(runCmd, reportCmd)
+	agentCmd := &cobra.Command{
+		Use:   "agent",
+		Short: "Per-agent subprocess entry — invoked by the reactor harness for every reactive trigger",
+		RunE:  runAgent,
+	}
+	agentCmd.Flags().StringVar(&flagDBPath, "db", "./data/synapbus.db", "Path to SynapBus SQLite DB")
+
+	root.AddCommand(runCmd, reportCmd, agentCmd)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -79,6 +89,36 @@ func openDB(path string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	return db, nil
+}
+
+// freshAPIKey mints a random 48-hex-char key with the "sk-dg-" prefix.
+func freshAPIKey() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "sk-dg-" + hex.EncodeToString(buf), nil
+}
+
+// bcryptHash wraps bcrypt.GenerateFromPassword at the default cost.
+func bcryptHash(s string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(s), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(h), nil
+}
+
+// absPath resolves a (possibly relative) path to absolute form.
+func absPath(p string) (string, error) { return filepath.Abs(p) }
+
+// selfPath returns the absolute path of the running docgardener binary.
+// Used to build the local_command for spawned specialists.
+func selfPath() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return "docgardener"
 }
 
 func runDemo(_ *cobra.Command, _ []string) error {

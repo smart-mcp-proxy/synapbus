@@ -49,6 +49,13 @@ mkdir -p "$DATA_DIR"
 
 # --- launch synapbus ---------------------------------------------------
 say "starting synapbus on port $PORT"
+# Disable the legacy background workers that hold the single-connection
+# write pool long enough to wedge interactive sessions. They manage
+# features (task-auction expiry, message retention, stalemate reminders)
+# that the doc-gardener demo doesn't use, so skipping them here is safe.
+export SYNAPBUS_DISABLE_EXPIRY_WORKER=1
+export SYNAPBUS_DISABLE_RETENTION_WORKER=1
+export SYNAPBUS_DISABLE_STALEMATE_WORKER=1
 nohup "$BIN" serve \
     --port "$PORT" \
     --data "$DATA_DIR" \
@@ -73,6 +80,69 @@ for i in $(seq 1 100); do
 done
 
 say "synapbus is up"
+
+# --- shorthand for admin calls -----------------------------------------
+admin() { "$BIN" --socket "$SOCKET" "$@"; }
+
+# --- user + human agent ------------------------------------------------
+say "creating user algis / algis-demo-pw"
+admin user create --username algis --password 'algis-demo-pw' --display-name Algis >/dev/null 2>&1 || true
+
+OWNER_ID=$(sqlite3 "$DATA_DIR/synapbus.db" "SELECT id FROM users WHERE username='algis'")
+if [ -z "$OWNER_ID" ] || [ "$OWNER_ID" = "1" ]; then
+    die "failed to resolve algis user id (got '$OWNER_ID')" 3
+fi
+say "algis user id = $OWNER_ID"
+
+admin agent create --name algis --display-name "Algis (human)" --type human --owner "$OWNER_ID" >/dev/null 2>&1 || true
+
+# --- coordinator agent -------------------------------------------------
+# The coordinator is reactive and runs via the subprocess harness as
+# `docgardener agent`. The reactor sets up the workdir with message.json
+# and env vars; docgardener reads SYNAPBUS_AGENT to dispatch.
+say "creating coordinator agent doc-gardener-coordinator"
+admin agent create \
+    --name doc-gardener-coordinator \
+    --display-name "Doc-gardener Coordinator" \
+    --type ai \
+    --owner "$OWNER_ID" >/dev/null 2>&1 || true
+
+# Configure reactive trigger mode, harness_name, local_command,
+# harness_config_json, and feature-018 trust columns (config_hash,
+# system_prompt, autonomy_tier, tool_scope_json) via sqlite3 — the
+# admin CLI doesn't expose the new columns yet.
+DG_ABS="$(cd "$SCRIPT_DIR" && pwd)/bin/docgardener"
+DB_ABS="$DATA_DIR/synapbus.db"
+LOCAL_CMD_JSON="[\"$DG_ABS\",\"agent\",\"--db\",\"$DB_ABS\"]"
+# SYNAPBUS_BIN + SYNAPBUS_SOCKET let the coordinator shell out to the
+# admin CLI for follow-up DMs (the real MessagingService.Send path
+# that fires the reactor dispatcher). SYNAPBUS_AGENT tells docgardener
+# which role it's running as.
+HARNESS_CFG_JSON="{\"env\":{\"SYNAPBUS_AGENT\":\"doc-gardener-coordinator\",\"SYNAPBUS_BIN\":\"$BIN\",\"SYNAPBUS_SOCKET\":\"$SOCKET\"}}"
+COORD_PROMPT='You are the doc-gardener coordinator. Your job is to decompose a high-level goal ("keep docs accurate against the source code") into a tree of sub-tasks, propose specialist agents to carry out the leaf tasks, monitor progress via the goal channel, and iterate. You never act on leaf tasks directly. You communicate via SynapBus DMs.'
+COORD_TOOL_SCOPE='["messages:read","messages:send","channels:read","reactions:add","goals:create","tasks:propose_tree","agents:propose"]'
+
+sqlite3 "$DATA_DIR/synapbus.db" <<SQL
+UPDATE agents SET
+    trigger_mode         = 'reactive',
+    cooldown_seconds     = 0,
+    daily_trigger_budget = 50,
+    max_trigger_depth    = 8,
+    harness_name         = 'subprocess',
+    local_command        = '$LOCAL_CMD_JSON',
+    harness_config_json  = '$HARNESS_CFG_JSON',
+    system_prompt        = '$COORD_PROMPT',
+    autonomy_tier        = 'assisted',
+    tool_scope_json      = '$COORD_TOOL_SCOPE',
+    config_hash          = '70a9a06e9595ade4edc527a792e857792d17af9819c80850cf53bea7ff3887ef'
+WHERE name = 'doc-gardener-coordinator';
+SQL
+
+# --- base channels -----------------------------------------------------
+say "ensuring approvals and requests channels"
+admin channels create --name approvals --type blackboard --description 'Approval queue' >/dev/null 2>&1 || true
+admin channels create --name requests  --type blackboard --description 'Resource requests' >/dev/null 2>&1 || true
+
 echo
 echo "  Web UI:        http://localhost:$PORT   (login: algis / algis-demo-pw)"
 echo "  Log:           tail -f $LOG_FILE"

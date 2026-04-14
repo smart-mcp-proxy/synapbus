@@ -553,15 +553,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	startTime := time.Now()
 
-	// Start task expiry worker
-	expiryWorker := channels.NewExpiryWorker(swarmService, 1*time.Minute)
-	expiryWorker.Start()
-	slog.Info("task expiry worker started")
+	// Start task expiry worker (gated — set SYNAPBUS_DISABLE_EXPIRY_WORKER=1
+	// to skip. Used by local examples to avoid the legacy-tasks-table
+	// write-pool contention bug that wedges the server over time.)
+	var expiryWorker *channels.ExpiryWorker
+	if os.Getenv("SYNAPBUS_DISABLE_EXPIRY_WORKER") == "1" {
+		slog.Info("task expiry worker disabled by SYNAPBUS_DISABLE_EXPIRY_WORKER=1")
+	} else {
+		expiryWorker = channels.NewExpiryWorker(swarmService, 1*time.Minute)
+		expiryWorker.Start()
+		slog.Info("task expiry worker started")
+	}
 
-	// Start message retention worker
+	// Start message retention worker (gated — set
+	// SYNAPBUS_DISABLE_RETENTION_WORKER=1 to skip.)
 	retentionCfg := messaging.ParseRetentionPeriod(messageRetention)
 	var retentionWorker *messaging.RetentionWorker
-	if retentionCfg.Enabled {
+	if os.Getenv("SYNAPBUS_DISABLE_RETENTION_WORKER") == "1" {
+		slog.Info("message retention worker disabled by SYNAPBUS_DISABLE_RETENTION_WORKER=1")
+	} else if retentionCfg.Enabled {
 		retentionWorker = messaging.NewRetentionWorker(db.DB, retentionCfg, dataDir)
 		retentionWorker.Start()
 		slog.Info("message retention worker started",
@@ -572,16 +582,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		slog.Info("message retention disabled")
 	}
 
-	// Start stalemate worker (message acknowledgment enforcement)
-	stalemateConfig := messaging.ParseStalemateConfig()
-	stalemateWorker := messaging.NewStalemateWorker(db.DB, msgService, &channelLookupAdapter{channelService: channelService}, stalemateConfig)
-	stalemateWorker.Start()
-	slog.Info("stalemate worker started",
-		"processing_timeout", stalemateConfig.ProcessingTimeout.String(),
-		"reminder_after", stalemateConfig.ReminderAfter.String(),
-		"escalate_after", stalemateConfig.EscalateAfter.String(),
-		"interval", stalemateConfig.Interval.String(),
-	)
+	// Start stalemate worker (gated — set SYNAPBUS_DISABLE_STALEMATE_WORKER=1
+	// to skip.)
+	var stalemateWorker *messaging.StalemateWorker
+	if os.Getenv("SYNAPBUS_DISABLE_STALEMATE_WORKER") == "1" {
+		slog.Info("stalemate worker disabled by SYNAPBUS_DISABLE_STALEMATE_WORKER=1")
+	} else {
+		stalemateConfig := messaging.ParseStalemateConfig()
+		stalemateWorker = messaging.NewStalemateWorker(db.DB, msgService, &channelLookupAdapter{channelService: channelService}, stalemateConfig)
+		stalemateWorker.Start()
+		slog.Info("stalemate worker started",
+			"processing_timeout", stalemateConfig.ProcessingTimeout.String(),
+			"reminder_after", stalemateConfig.ReminderAfter.String(),
+			"escalate_after", stalemateConfig.EscalateAfter.String(),
+			"interval", stalemateConfig.Interval.String(),
+		)
+	}
 
 	// Create health checker
 	healthChecker := health.NewChecker(db.DB, version)
@@ -798,7 +814,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	deliveryEngine.Stop()
 
 	// Stop expiry worker
-	expiryWorker.Stop()
+	if expiryWorker != nil {
+		expiryWorker.Stop()
+	}
 
 	// Stop message retention worker
 	if retentionWorker != nil {
@@ -806,7 +824,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Stop stalemate worker
-	stalemateWorker.Stop()
+	if stalemateWorker != nil {
+		stalemateWorker.Stop()
+	}
 
 	// Stop embedding pipeline
 	if embPipeline != nil {
