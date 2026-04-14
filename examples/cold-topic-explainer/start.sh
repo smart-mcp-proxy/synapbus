@@ -111,13 +111,23 @@ admin() { "$BIN" --socket "$SOCKET" "$@"; }
 say "creating user algis / algis-demo-pw"
 admin user create --username algis --password 'algis-demo-pw' --display-name Algis >/dev/null
 
+# The admin user is auto-seeded at id=1, so the freshly created algis
+# user gets the next id (typically 2). Look it up from the DB rather
+# than hard-coding a guess — we need this id for all subsequent
+# --owner flags so the algis login actually sees the agents it owns.
+OWNER_ID=$(sqlite3 "$DATA_DIR/synapbus.db" "SELECT id FROM users WHERE username='algis'")
+if [ -z "$OWNER_ID" ] || [ "$OWNER_ID" = "1" ]; then
+    die "failed to resolve algis user id (got '$OWNER_ID')" 3
+fi
+say "algis user id = $OWNER_ID"
+
 say "creating type=human agent for algis"
-admin agent create --name algis --display-name "Algis (human)" --type human --owner 1 >/dev/null
+admin agent create --name algis --display-name "Algis (human)" --type human --owner "$OWNER_ID" >/dev/null
 
 # --- three AI agents ---------------------------------------------------
 for name in decomposer-pro writer-flash critic-lite; do
     say "creating agent $name"
-    admin agent create --name "$name" --display-name "$name" --type ai --owner 1 >/dev/null
+    admin agent create --name "$name" --display-name "$name" --type ai --owner "$OWNER_ID" >/dev/null
 done
 
 # --- reactive config ---------------------------------------------------
