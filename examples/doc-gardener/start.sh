@@ -39,6 +39,28 @@ fi
 # --- build -------------------------------------------------------------
 say "building synapbus + docgardener binaries..."
 mkdir -p "$BIN_DIR"
+
+# The Web UI is embedded via go:embed at compile time. If
+# internal/web/dist is missing or stale the binary will serve an
+# old/empty SPA (symptom: channel messages UI stuck on loading
+# skeletons). Rebuild it from web/build whenever the source is newer
+# than the embedded copy, or if the embedded copy is missing.
+DIST_DIR="$REPO_ROOT/internal/web/dist"
+WEB_SRC="$REPO_ROOT/web/build"
+if [ ! -d "$DIST_DIR/_app" ] || [ -z "$(ls -A "$DIST_DIR" 2>/dev/null)" ]; then
+    say "embedded web dist missing — running 'npm run build' and syncing"
+    if command -v npm >/dev/null && [ -d "$REPO_ROOT/web/node_modules" ]; then
+        (cd "$REPO_ROOT/web" && npm run build >/dev/null 2>&1) || true
+    fi
+    if [ -d "$WEB_SRC/_app" ]; then
+        rm -rf "$DIST_DIR"
+        mkdir -p "$DIST_DIR"
+        cp -r "$WEB_SRC/"* "$DIST_DIR/"
+    else
+        say "WARNING: $WEB_SRC not found — embedded web dist may be stale"
+    fi
+fi
+
 (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$BIN" ./cmd/synapbus)
 (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$DOCGARDENER" ./cmd/docgardener)
 
