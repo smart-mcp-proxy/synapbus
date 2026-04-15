@@ -241,8 +241,12 @@ func (h *Harness) buildRunArgs(
 	}
 
 	// Read-only root + tmpfs scratch unless explicitly disabled.
+	// The tmpfs mount is `exec` so agents can download and run small
+	// binaries there (e.g. a CLI the verifier needs to invoke). Without
+	// `exec` Docker Desktop's default "noexec" on tmpfs breaks any
+	// `chmod +x && ./binary` workflow inside the sandbox.
 	if dockerCfg.ReadOnlyRoot == nil || *dockerCfg.ReadOnlyRoot {
-		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,size=64m")
+		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,exec,size=128m")
 	}
 
 	if dockerCfg.Memory != "" {

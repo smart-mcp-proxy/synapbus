@@ -44,7 +44,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && npm config set update-notifier false
 
 # Agent CLIs. Install globally so any user inside the container can
-# call them. Pinned versions are accepted via build args above.
+# call them. Pinned versions are accepted via build args above. Any
+# domain-specific CLIs (mcpproxy, terraform, aws, ...) are NOT baked
+# in — the agent downloads and runs them on demand inside the sandbox.
+# That's the whole point of the "universal gardener" design: the image
+# is a blank Linux shell with enough language runtimes to install
+# anything else, and every example is self-contained in its prompt.
 RUN npm install -g \
         @google/gemini-cli@${GEMINI_CLI_VERSION} \
         @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
