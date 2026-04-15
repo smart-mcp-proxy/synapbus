@@ -34,7 +34,7 @@ PID_FILE="$SCRIPT_DIR/.synapbus.pid"
 LOG_FILE="$SCRIPT_DIR/synapbus.log"
 
 # Two-tier model hierarchy: smart for triage, fast for workers.
-COORDINATOR_MODEL="${SYNAPBUS_COORDINATOR_MODEL:-gemini-2.5-pro}"
+COORDINATOR_MODEL="${SYNAPBUS_COORDINATOR_MODEL:-gemini-3.1-pro-preview}"
 WORKER_MODEL="${SYNAPBUS_WORKER_MODEL:-gemini-2.5-flash}"
 
 # Container image agents run inside.

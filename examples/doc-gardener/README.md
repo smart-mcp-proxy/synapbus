@@ -124,7 +124,7 @@ The `.gemini/settings.json` materialized by the harness already points at the ho
 | Variable | Default | What it does |
 |---|---|---|
 | `SYNAPBUS_PORT` | `18089` | Host HTTP port |
-| `SYNAPBUS_COORDINATOR_MODEL` | `gemini-2.5-pro` | Smart triage model |
+| `SYNAPBUS_COORDINATOR_MODEL` | `gemini-3.1-pro-preview` | Smart triage model (fall back to `gemini-2.5-pro` if rate-limited) |
 | `SYNAPBUS_WORKER_MODEL` | `gemini-2.5-flash` | Fast inspector + critic model |
 | `SYNAPBUS_AGENT_IMAGE` | `synapbus-agent:latest` | Container image to run agents in |
 | `GEMINI_API_KEY` | (required) | Forwarded to every container as `-e` |
