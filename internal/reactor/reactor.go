@@ -315,10 +315,17 @@ func (r *Reactor) agentBackendKind(agent *agents.Agent) string {
 // return, matching the K8s path), then spawns a goroutine that blocks
 // on Registry.Execute and writes the terminal status when done.
 func (r *Reactor) dispatchHarness(ctx context.Context, agent *agents.Agent, event dispatcher.MessageEvent, depth int) error {
+	// No truncation here — subprocess + docker backends write the
+	// message body to a message.json file in the per-run workdir,
+	// which the container reads via a bind-mount. Large inspector
+	// artifacts (drift reports, code diffs, etc.) routinely exceed
+	// 4 KiB, and silently truncating them caused the doc-gardener
+	// critic to see incomplete JSON and spuriously REVISE.
+	//
+	// The K8s path still truncates in createJob() because its body
+	// travels via a Kubernetes env var where k8s imposes a 1 MiB
+	// envvar cap and most shells misbehave past a few KiB.
 	body := event.Body
-	if len(body) > 4096 {
-		body = body[:4096] + " [truncated]"
-	}
 
 	now := time.Now().UTC()
 	run := &ReactiveRun{
