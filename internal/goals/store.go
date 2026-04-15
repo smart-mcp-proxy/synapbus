@@ -60,11 +60,13 @@ func (s *Store) Get(ctx context.Context, id int64) (*Goal, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, title, description, owner_user_id, channel_id, coordinator_agent_id,
 		       root_task_id, status, budget_tokens, budget_dollars_cents, max_spawn_depth,
-		       alert_80pct_posted, created_at, updated_at, completed_at
+		       alert_80pct_posted, created_at, updated_at, completed_at,
+		       completion_summary, completion_message_id
 		FROM goals WHERE id = ?`, id).Scan(
 		&g.ID, &g.Slug, &g.Title, &g.Description, &g.OwnerUserID, &g.ChannelID, &g.CoordinatorAgentID,
 		&g.RootTaskID, &g.Status, &g.BudgetTokens, &g.BudgetDollarsCents, &g.MaxSpawnDepth,
-		&alert, &g.CreatedAt, &g.UpdatedAt, &g.CompletedAt)
+		&alert, &g.CreatedAt, &g.UpdatedAt, &g.CompletedAt,
+		&g.CompletionSummary, &g.CompletionMessageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGoalNotFound
 	}
@@ -88,13 +90,15 @@ func (s *Store) List(ctx context.Context, ownerUserID *int64, limit int) ([]*Goa
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, slug, title, description, owner_user_id, channel_id, coordinator_agent_id,
 			       root_task_id, status, budget_tokens, budget_dollars_cents, max_spawn_depth,
-			       alert_80pct_posted, created_at, updated_at, completed_at
+			       alert_80pct_posted, created_at, updated_at, completed_at,
+			       completion_summary, completion_message_id
 			FROM goals WHERE owner_user_id = ? ORDER BY id DESC LIMIT ?`, *ownerUserID, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, slug, title, description, owner_user_id, channel_id, coordinator_agent_id,
 			       root_task_id, status, budget_tokens, budget_dollars_cents, max_spawn_depth,
-			       alert_80pct_posted, created_at, updated_at, completed_at
+			       alert_80pct_posted, created_at, updated_at, completed_at,
+			       completion_summary, completion_message_id
 			FROM goals ORDER BY id DESC LIMIT ?`, limit)
 	}
 	if err != nil {
@@ -110,6 +114,7 @@ func (s *Store) List(ctx context.Context, ownerUserID *int64, limit int) ([]*Goa
 			&g.ID, &g.Slug, &g.Title, &g.Description, &g.OwnerUserID, &g.ChannelID, &g.CoordinatorAgentID,
 			&g.RootTaskID, &g.Status, &g.BudgetTokens, &g.BudgetDollarsCents, &g.MaxSpawnDepth,
 			&alert, &g.CreatedAt, &g.UpdatedAt, &g.CompletedAt,
+			&g.CompletionSummary, &g.CompletionMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -132,6 +137,31 @@ func (s *Store) SetStatus(ctx context.Context, goalID int64, newStatus string) e
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE goals SET status = ?, updated_at = ? WHERE id = ?`,
 		newStatus, time.Now().UTC(), goalID)
+	return err
+}
+
+// SetCompletion records the critic's completion verdict: status
+// transition, final summary body, and the message id the summary
+// was delivered in. Used by the complete_goal MCP tool. When
+// newStatus is "completed", completed_at is populated. For terminal
+// failure states ("stuck", "cancelled") completed_at is also set so
+// the UI treats them uniformly as "no longer running".
+func (s *Store) SetCompletion(ctx context.Context, goalID int64, newStatus, summary string, messageID int64) error {
+	now := time.Now().UTC()
+	var completedAt *time.Time
+	switch newStatus {
+	case "completed", "stuck", "cancelled":
+		completedAt = &now
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE goals SET
+			status = ?,
+			completion_summary = ?,
+			completion_message_id = ?,
+			completed_at = COALESCE(?, completed_at),
+			updated_at = ?
+		WHERE id = ?`,
+		newStatus, summary, messageID, completedAt, now, goalID)
 	return err
 }
 

@@ -34,6 +34,13 @@ type Goal struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	CompletedAt        *time.Time
+	// CompletionSummary is the critic's FINAL paragraph (or the
+	// failure reason when status=stuck). Populated by complete_goal.
+	CompletionSummary *string
+	// CompletionMessageID is the id of the DM that carried the
+	// completion verdict — lets /goals/<id> deep-link to the full
+	// findings JSON or report body.
+	CompletionMessageID *int64
 }
 
 // CreateGoalInput captures the public arguments of CreateGoal.

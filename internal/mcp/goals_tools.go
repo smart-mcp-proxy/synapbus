@@ -53,8 +53,8 @@ func NewGoalsToolRegistrar(
 }
 
 // RegisterAllOnServer attaches create_goal, propose_task_tree,
-// propose_agent, claim_task, request_resource, list_resources to the
-// MCP server.
+// propose_agent, claim_task, request_resource, list_resources, and
+// complete_goal to the MCP server.
 func (r *GoalsToolRegistrar) RegisterAllOnServer(s *server.MCPServer) {
 	s.AddTool(r.createGoalTool(), r.handleCreateGoal)
 	s.AddTool(r.proposeTaskTreeTool(), r.handleProposeTaskTree)
@@ -62,7 +62,8 @@ func (r *GoalsToolRegistrar) RegisterAllOnServer(s *server.MCPServer) {
 	s.AddTool(r.claimTaskTool(), r.handleClaimTask)
 	s.AddTool(r.requestResourceTool(), r.handleRequestResource)
 	s.AddTool(r.listResourcesTool(), r.handleListResources)
-	r.logger.Info("spec-018 MCP tools registered", "count", 6)
+	s.AddTool(r.completeGoalTool(), r.handleCompleteGoal)
+	r.logger.Info("spec-018 MCP tools registered", "count", 7)
 }
 
 // --- Tool Definitions ---
@@ -117,6 +118,16 @@ func (r *GoalsToolRegistrar) requestResourceTool() mcplib.Tool {
 func (r *GoalsToolRegistrar) listResourcesTool() mcplib.Tool {
 	return mcplib.NewTool("list_resources",
 		mcplib.WithDescription("List the names of secrets currently available to the calling agent. Returns names only — never values. Use this to check whether a secret has been provisioned after calling request_resource."),
+	)
+}
+
+func (r *GoalsToolRegistrar) completeGoalTool() mcplib.Tool {
+	return mcplib.NewTool("complete_goal",
+		mcplib.WithDescription("Mark a goal as terminally done. The critic (or coordinator) calls this after the FINAL verdict: status=\"completed\" on success, \"stuck\" when the goal couldn't be finished, \"cancelled\" when the human aborted. Records a summary paragraph for /goals/<id> and links it to the DM that carried the FINAL message. Idempotent when called with the current status."),
+		mcplib.WithNumber("goal_id", mcplib.Description("Goal id from create_goal"), mcplib.Required()),
+		mcplib.WithString("status", mcplib.Description("Terminal status: completed | stuck | cancelled"), mcplib.Required()),
+		mcplib.WithString("summary", mcplib.Description("One-paragraph human-readable completion summary (what was done, top findings, recommended next step). Goes straight into /goals/<id>."), mcplib.Required()),
+		mcplib.WithNumber("completion_message_id", mcplib.Description("Optional id of the message that carried the verdict. When set, /goals/<id> can deep-link to the full findings JSON in that DM.")),
 	)
 }
 
@@ -214,6 +225,13 @@ func (r *GoalsToolRegistrar) handleProposeTaskTree(ctx context.Context, req mcpl
 
 	// Also set the goal's root_task_id.
 	_, _ = r.db.ExecContext(ctx, `UPDATE goals SET root_task_id=? WHERE id=?`, rootID, goalID)
+
+	// Auto-transition draft → active. The coordinator would otherwise
+	// have to call a separate tool just to flip state, which is friction
+	// we don't need — if there's a task tree, the goal is active. Ignore
+	// the legal-transition error when the goal isn't in draft (operators
+	// may have already moved it manually).
+	_ = r.goals.TransitionStatus(ctx, goalID, goals.StatusActive)
 
 	return resultJSON(map[string]any{
 		"root_task_id": rootID,
@@ -367,5 +385,59 @@ func (r *GoalsToolRegistrar) handleListResources(ctx context.Context, req mcplib
 	return resultJSON(map[string]any{
 		"resources": names,
 		"count":     len(names),
+	})
+}
+
+func (r *GoalsToolRegistrar) handleCompleteGoal(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	agentName, ok := extractAgentName(ctx)
+	if !ok {
+		return mcplib.NewToolResultError("authentication required"), nil
+	}
+	if r.goals == nil {
+		return mcplib.NewToolResultError("goals service not configured"), nil
+	}
+	goalID := int64(req.GetInt("goal_id", 0))
+	status := req.GetString("status", "")
+	summary := req.GetString("summary", "")
+	messageID := int64(req.GetInt("completion_message_id", 0))
+	if goalID <= 0 || status == "" || summary == "" {
+		return mcplib.NewToolResultError("goal_id, status, and summary are all required"), nil
+	}
+	switch status {
+	case goals.StatusCompleted, goals.StatusStuck, goals.StatusCancelled:
+		// ok
+	default:
+		return mcplib.NewToolResultError(fmt.Sprintf("invalid status %q — must be completed|stuck|cancelled", status)), nil
+	}
+
+	// Authorization: caller must own the goal (same human owner).
+	// Coordinator + critic both run as ai agents owned by the same
+	// user in the doc-gardener example; this check keeps one user's
+	// agents from closing another user's goals.
+	callerAgent, err := r.agents.GetAgent(ctx, agentName)
+	if err != nil {
+		return mcplib.NewToolResultError(fmt.Sprintf("resolve caller: %s", err)), nil
+	}
+	g, err := r.goals.GetGoal(ctx, goalID)
+	if err != nil {
+		return mcplib.NewToolResultError(fmt.Sprintf("get goal: %s", err)), nil
+	}
+	if callerAgent.OwnerID != g.OwnerUserID {
+		return mcplib.NewToolResultError("goal is owned by a different user — refusing to transition"), nil
+	}
+
+	if err := r.goals.Complete(ctx, goalID, status, summary, messageID); err != nil {
+		return mcplib.NewToolResultError(fmt.Sprintf("complete_goal: %s", err)), nil
+	}
+
+	r.logger.Info("goal completed via MCP",
+		"goal_id", goalID,
+		"status", status,
+		"by_agent", agentName,
+	)
+
+	return resultJSON(map[string]any{
+		"goal_id": goalID,
+		"status":  status,
 	})
 }

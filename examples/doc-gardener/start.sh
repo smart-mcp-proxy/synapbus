@@ -153,12 +153,17 @@ for name in doc-coordinator docs-inspector docs-critic; do
 done
 
 say "configuring reactive trigger mode"
+# max_trigger_depth = 4 caps the conversation loop at about two
+# inspector↔critic round-trips (each REVISE costs two hops). Prevents
+# the agents from spinning forever on a badly-formed report when the
+# critic doesn't converge; see configs/critic.json for the structural
+# half of the cap.
 sqlite3 "$DATA_DIR/synapbus.db" <<SQL
 UPDATE agents SET
     trigger_mode = 'reactive',
     cooldown_seconds = 0,
     daily_trigger_budget = 50,
-    max_trigger_depth = 8
+    max_trigger_depth = 4
 WHERE name IN ('doc-coordinator','docs-inspector','docs-critic');
 SQL
 

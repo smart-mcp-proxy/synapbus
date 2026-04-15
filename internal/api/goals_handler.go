@@ -41,34 +41,43 @@ func (h *GoalsHandler) ListGoals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type goalSummary struct {
-		ID                 int64   `json:"id"`
-		Slug               string  `json:"slug"`
-		Title              string  `json:"title"`
-		Status             string  `json:"status"`
-		ChannelID          int64   `json:"channel_id"`
-		OwnerUsername      string  `json:"owner_username"`
-		RootTaskID         *int64  `json:"root_task_id"`
-		SpentTokens        int64   `json:"spent_tokens"`
-		SpentDollarsCents  int64   `json:"spent_dollars_cents"`
-		TaskCount          int     `json:"task_count"`
-		BudgetTokens       *int64  `json:"budget_tokens"`
-		BudgetDollarsCents *int64  `json:"budget_dollars_cents"`
-		PercentBudget      float64 `json:"percent_budget"`
-		CreatedAt          string  `json:"created_at"`
+		ID                  int64   `json:"id"`
+		Slug                string  `json:"slug"`
+		Title               string  `json:"title"`
+		Status              string  `json:"status"`
+		ChannelID           int64   `json:"channel_id"`
+		OwnerUsername       string  `json:"owner_username"`
+		RootTaskID          *int64  `json:"root_task_id"`
+		SpentTokens         int64   `json:"spent_tokens"`
+		SpentDollarsCents   int64   `json:"spent_dollars_cents"`
+		TaskCount           int     `json:"task_count"`
+		BudgetTokens        *int64  `json:"budget_tokens"`
+		BudgetDollarsCents  *int64  `json:"budget_dollars_cents"`
+		PercentBudget       float64 `json:"percent_budget"`
+		CompletionSummary   *string `json:"completion_summary,omitempty"`
+		CompletionMessageID *int64  `json:"completion_message_id,omitempty"`
+		CompletedAt         *string `json:"completed_at,omitempty"`
+		CreatedAt           string  `json:"created_at"`
 	}
 
 	out := make([]goalSummary, 0, len(gs))
 	for _, g := range gs {
 		s := goalSummary{
-			ID:                 g.ID,
-			Slug:               g.Slug,
-			Title:              g.Title,
-			Status:             g.Status,
-			ChannelID:          g.ChannelID,
-			RootTaskID:         g.RootTaskID,
-			BudgetTokens:       g.BudgetTokens,
-			BudgetDollarsCents: g.BudgetDollarsCents,
-			CreatedAt:          g.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			ID:                  g.ID,
+			Slug:                g.Slug,
+			Title:               g.Title,
+			Status:              g.Status,
+			ChannelID:           g.ChannelID,
+			RootTaskID:          g.RootTaskID,
+			BudgetTokens:        g.BudgetTokens,
+			BudgetDollarsCents:  g.BudgetDollarsCents,
+			CompletionSummary:   g.CompletionSummary,
+			CompletionMessageID: g.CompletionMessageID,
+			CreatedAt:           g.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		}
+		if g.CompletedAt != nil {
+			ca := g.CompletedAt.UTC().Format("2006-01-02T15:04:05Z")
+			s.CompletedAt = &ca
 		}
 		_ = h.db.QueryRowContext(r.Context(),
 			`SELECT username FROM users WHERE id=?`, g.OwnerUserID).Scan(&s.OwnerUsername)
@@ -286,23 +295,32 @@ func (h *GoalsHandler) GetGoal(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
+	var completedAt *string
+	if g.CompletedAt != nil {
+		s := g.CompletedAt.UTC().Format("2006-01-02T15:04:05Z")
+		completedAt = &s
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"goal": map[string]any{
-			"id":                   g.ID,
-			"slug":                 g.Slug,
-			"title":                g.Title,
-			"description":          g.Description,
-			"status":               g.Status,
-			"channel_id":           g.ChannelID,
-			"coordinator_agent_id": g.CoordinatorAgentID,
-			"root_task_id":         g.RootTaskID,
-			"owner_user_id":        g.OwnerUserID,
-			"owner_username":       ownerUsername,
-			"budget_tokens":        g.BudgetTokens,
-			"budget_dollars_cents": g.BudgetDollarsCents,
-			"max_spawn_depth":      g.MaxSpawnDepth,
-			"alert_80pct_posted":   g.Alert80PctPosted,
-			"created_at":           g.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			"id":                    g.ID,
+			"slug":                  g.Slug,
+			"title":                 g.Title,
+			"description":           g.Description,
+			"status":                g.Status,
+			"channel_id":            g.ChannelID,
+			"coordinator_agent_id":  g.CoordinatorAgentID,
+			"root_task_id":          g.RootTaskID,
+			"owner_user_id":         g.OwnerUserID,
+			"owner_username":        ownerUsername,
+			"budget_tokens":         g.BudgetTokens,
+			"budget_dollars_cents":  g.BudgetDollarsCents,
+			"max_spawn_depth":       g.MaxSpawnDepth,
+			"alert_80pct_posted":    g.Alert80PctPosted,
+			"completion_summary":    g.CompletionSummary,
+			"completion_message_id": g.CompletionMessageID,
+			"created_at":            g.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			"completed_at":          completedAt,
 		},
 		"tasks": out,
 		"rollup": map[string]any{

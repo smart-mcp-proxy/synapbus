@@ -42,11 +42,31 @@ printf '%s' "$GOAL" | "$BIN" --socket "$SOCKET" messages send \
     --to doc-coordinator \
     --priority 8 >&2
 
-say "waiting for FINAL: / CANNOT: reply to algis (up to 600s)..."
+say "waiting for goal completion or FINAL:/CANNOT: reply to algis (up to 600s)..."
 deadline=$(( $(date +%s) + 600 ))
 last_seen_id=$BASELINE
 
 while [ "$(date +%s)" -lt "$deadline" ]; do
+    # Goal completion check (definitive signal — set by complete_goal MCP).
+    # A goal in 'completed'/'stuck'/'cancelled' state with a
+    # completion_summary means the critic finalized the verdict.
+    COMPLETED=$(sqlite3 "$DB" "
+        SELECT id FROM goals
+        WHERE status IN ('completed','stuck','cancelled')
+          AND completion_summary IS NOT NULL
+        ORDER BY id DESC LIMIT 1
+    " 2>/dev/null || true)
+    if [ -n "$COMPLETED" ]; then
+        say "goal $COMPLETED reached terminal state"
+        GOAL_SUMMARY=$(sqlite3 "$DB" "SELECT status || ': ' || COALESCE(completion_summary,'') FROM goals WHERE id = $COMPLETED" 2>/dev/null)
+        say "$GOAL_SUMMARY"
+        echo "$COMPLETED" > "$SCRIPT_DIR/.last_goal_id"
+        say "goal id = $COMPLETED — render with ./report.sh"
+        exit 0
+    fi
+
+    # Message-based fallback (for TRIVIAL/CANNOT paths that skip the
+    # task tree and never call complete_goal).
     NEW_LINES=$(sqlite3 -separator '|' "$DB" "
         SELECT id, from_agent, replace(substr(body, 1, 280), char(10), ' ')
         FROM messages
@@ -62,20 +82,31 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
             say "← [$from #$id] $body"
             last_seen_id=$id
             case "$body" in
-                DELEGATED:*|REVISING:*)
+                DELEGATED:*|REVISING:*|Received\ system\ trigger*|Coalesced\ trigger*)
                     ;;  # informational, keep waiting
+                FINAL:*|CANNOT:*)
+                    say "terminal response received"
+                    GOAL_ID=$(sqlite3 "$DB" 'SELECT id FROM goals ORDER BY id DESC LIMIT 1' 2>/dev/null || echo)
+                    if [ -n "$GOAL_ID" ]; then
+                        echo "$GOAL_ID" > "$SCRIPT_DIR/.last_goal_id"
+                        say "goal id = $GOAL_ID — render with ./report.sh"
+                    fi
+                    exit 0
+                    ;;
                 *)
-                    if [ "$from" = "doc-coordinator" ] || \
-                       [ "${body#FINAL:}" != "$body" ] || \
-                       [ "${body#CANNOT:}" != "$body" ]; then
-                        say "terminal response received"
-                        # Persist last goal id for ./report.sh.
-                        GOAL_ID=$(sqlite3 "$DB" 'SELECT id FROM goals ORDER BY id DESC LIMIT 1' 2>/dev/null || echo)
-                        if [ -n "$GOAL_ID" ]; then
-                            echo "$GOAL_ID" > "$SCRIPT_DIR/.last_goal_id"
-                            say "goal id = $GOAL_ID — render with ./report.sh"
+                    # A bare reply from doc-coordinator with no status
+                    # prefix is a TRIVIAL-triage direct answer. Count
+                    # it as terminal only if no goal was created (i.e.
+                    # the coordinator didn't start a pipeline).
+                    if [ "$from" = "doc-coordinator" ]; then
+                        HAS_GOAL=$(sqlite3 "$DB" 'SELECT COUNT(*) FROM goals' 2>/dev/null || echo 0)
+                        if [ "$HAS_GOAL" = "0" ]; then
+                            say "direct (trivial) response received"
+                            exit 0
                         fi
-                        exit 0
+                        # Otherwise keep waiting — the coordinator
+                        # already delegated and will finalize via
+                        # complete_goal once the critic runs.
                     fi
                     ;;
             esac
@@ -86,6 +117,6 @@ EOF
     sleep 1
 done
 
-say "timed out waiting for terminal response (FINAL: or CANNOT:)"
+say "timed out waiting for terminal response"
 say "check http://localhost:18089/runs and http://localhost:18089/goals"
 exit 2

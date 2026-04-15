@@ -104,6 +104,30 @@ func (s *Service) TransitionStatus(ctx context.Context, goalID int64, newStatus 
 	return s.store.SetStatus(ctx, goalID, newStatus)
 }
 
+// Complete transitions a goal to a terminal state (completed / stuck /
+// cancelled) and records the critic's completion summary and the
+// message id the FINAL message was delivered in. Legal transitions:
+//
+//	draft|active|stuck → completed
+//	draft|active       → stuck
+//	any                → cancelled
+//
+// If the goal is already in the target state, Complete is a no-op
+// (idempotent). It never demotes a completed goal.
+func (s *Service) Complete(ctx context.Context, goalID int64, newStatus, summary string, messageID int64) error {
+	g, err := s.store.Get(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	if g.Status == newStatus {
+		return nil
+	}
+	if !legalTransition(g.Status, newStatus) {
+		return fmt.Errorf("illegal goal transition: %s → %s", g.Status, newStatus)
+	}
+	return s.store.SetCompletion(ctx, goalID, newStatus, summary, messageID)
+}
+
 // BudgetVerdict describes what the budget enforcer wants the caller to do.
 type BudgetVerdict struct {
 	PercentBudget float64 // 0..100+
@@ -145,13 +169,20 @@ func (s *Service) MarkSoftAlertPosted(ctx context.Context, goalID int64) error {
 func legalTransition(from, to string) bool {
 	switch from {
 	case StatusDraft:
-		return to == StatusActive || to == StatusCancelled
+		// A goal can jump straight from draft to a terminal state
+		// when the workflow never bothers with an explicit active
+		// transition (e.g. the doc-gardener critic completes the
+		// goal at the end of a fast single-round inspector pass).
+		return to == StatusActive || to == StatusCompleted ||
+			to == StatusStuck || to == StatusCancelled
 	case StatusActive:
-		return to == StatusPaused || to == StatusCompleted || to == StatusStuck || to == StatusCancelled
+		return to == StatusPaused || to == StatusCompleted ||
+			to == StatusStuck || to == StatusCancelled
 	case StatusPaused:
-		return to == StatusActive || to == StatusCancelled
+		return to == StatusActive || to == StatusCompleted ||
+			to == StatusStuck || to == StatusCancelled
 	case StatusStuck:
-		return to == StatusActive || to == StatusCancelled
+		return to == StatusActive || to == StatusCompleted || to == StatusCancelled
 	}
 	return false
 }
